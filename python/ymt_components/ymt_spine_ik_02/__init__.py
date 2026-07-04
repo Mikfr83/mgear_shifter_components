@@ -48,7 +48,7 @@ class Component(component.Main):
 
         self.divisions = len(self.guide.apos)
 
-        self.normal = self.guide.blades["blade"].z * -1
+        self.normal = self.guide.blades["blade"].y
         self.binormal = self.guide.blades["blade"].x
 
         self.WIP = self.options["mode"]
@@ -146,7 +146,7 @@ class Component(component.Main):
 
         self.jointList = []
         self.preiviousCtlTag = self.parentCtlTag
-        chain = getChainTransform2(self.guide.apos, self.normal, self.negate)
+        chain = getChainTransform2(self.guide.apos, self.normal, self.negate, "xy")
         for i, t in enumerate(chain):
             parentdiv, parentctl = self._addObjectsFkControl(i, parentdiv, parentctl, t, parent_twistRef)
 

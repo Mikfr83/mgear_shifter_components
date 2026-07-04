@@ -38,6 +38,7 @@ from mgear.core.transform import (
 from mgear.core.primitive import addTransform
 
 from ymt_shifter_utility import twistSplineBuilder as tsBuilder
+from ymt_shifter_utility.four_point_plane import create_four_point_plane_transform
 from ymt_shifter_utility.type_protocols import ComponentLike, DagNodeLike, MatrixLike, PymelNode, VectorLike
 from ymt_shifter_utility import synoptic
 
