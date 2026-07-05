@@ -9,7 +9,7 @@ QtGui, QtCore, QtWidgets, wrapInstance = gqt.qt_import()
 class Ui_Form(object):
     def setupUi(self, Form: QtWidgets.QWidget) -> None:
         Form.setObjectName("Form")
-        Form.resize(440, 520)
+        Form.resize(440, 560)
         self.gridLayout = QtWidgets.QGridLayout(Form)
         self.groupBox = QtWidgets.QGroupBox(Form)
         self.groupBox.setTitle("")
@@ -39,6 +39,16 @@ class Ui_Form(object):
         self.detailCurlRotMults_lineEdit = QtWidgets.QLineEdit(self.groupBox)
         self.formLayout.setWidget(3, QtWidgets.QFormLayout.LabelRole, self.detailCurlRotMults_label)
         self.formLayout.setWidget(3, QtWidgets.QFormLayout.FieldRole, self.detailCurlRotMults_lineEdit)
+
+        self.foldFanClose_label = QtWidgets.QLabel(self.groupBox)
+        self.foldFanClose_lineEdit = QtWidgets.QLineEdit(self.groupBox)
+        self.formLayout.setWidget(4, QtWidgets.QFormLayout.LabelRole, self.foldFanClose_label)
+        self.formLayout.setWidget(4, QtWidgets.QFormLayout.FieldRole, self.foldFanClose_lineEdit)
+
+        self.foldTiltSteps_label = QtWidgets.QLabel(self.groupBox)
+        self.foldTiltSteps_lineEdit = QtWidgets.QLineEdit(self.groupBox)
+        self.formLayout.setWidget(5, QtWidgets.QFormLayout.LabelRole, self.foldTiltSteps_label)
+        self.formLayout.setWidget(5, QtWidgets.QFormLayout.FieldRole, self.foldTiltSteps_lineEdit)
 
         self.row_groupBox = QtWidgets.QGroupBox(self.groupBox)
         self.row_groupBox.setTitle("")
@@ -78,6 +88,8 @@ class Ui_Form(object):
         self.ctlSize_label.setText(gqt.fakeTranslate("Form", "Ctl Size", None, -1))
         self.addJoints_checkBox.setText(gqt.fakeTranslate("Form", "Add Joints", None, -1))
         self.detailCurlRotMults_label.setText(gqt.fakeTranslate("Form", "Detail Curl Rot Mults", None, -1))
+        self.foldFanClose_label.setText(gqt.fakeTranslate("Form", "Fold Fan Close (per row)", None, -1))
+        self.foldTiltSteps_label.setText(gqt.fakeTranslate("Form", "Fold Tilt Steps (deg, per row)", None, -1))
         self.row_groupBox.setTitle(gqt.fakeTranslate("Form", "Feather Rows", None, -1))
         self.addRow_pushButton.setText(gqt.fakeTranslate("Form", "Add Row", None, -1))
         self.removeRow_pushButton.setText(gqt.fakeTranslate("Form", "Remove Row", None, -1))

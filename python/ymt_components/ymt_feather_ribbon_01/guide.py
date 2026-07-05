@@ -88,6 +88,8 @@ class Guide(guide.ComponentGuide):
             "primary: 0.2\nsecondary: 0.375\ntertial: 0.55",
         )
         self.pDetailCurlRotMults = self.addParam("detailCurlRotMults", "string", "1")
+        self.pFoldFanClose = self.addParam("foldFanClose", "string", "1")
+        self.pFoldTiltSteps = self.addParam("foldTiltSteps", "string", "0")
         self.pCtlSize = self.addParam("ctlSize", "double", 1, 0.001, None)
         self.pAddJoints = self.addParam("addJoints", "bool", True)
         self.pUseIndex = self.addParam("useIndex", "bool", False)
@@ -175,6 +177,7 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
         self.settingsTab.placementMode_comboBox.setCurrentIndex(self.root.attr("placementMode").get())
         self.populate_row_table()
         self._sync_detail_curl_rot_mult_count(self._detail_column_count_from_root())
+        self._sync_fold_settings_count(self._row_count_from_root())
         self.settingsTab.ctlSize_doubleSpinBox.setValue(self.root.attr("ctlSize").get())
         self.populateCheck(self.settingsTab.addJoints_checkBox, "addJoints")
 
@@ -204,6 +207,8 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
         self.settingsTab.removeRow_pushButton.clicked.connect(self.remove_selected_row_table_item)
         self.settingsTab.generateLocators_pushButton.clicked.connect(self.rebuild_detail_locators)
         self.settingsTab.detailCurlRotMults_lineEdit.editingFinished.connect(self.update_detail_curl_rot_mults_setting)
+        self.settingsTab.foldFanClose_lineEdit.editingFinished.connect(self.update_fold_fan_close_setting)
+        self.settingsTab.foldTiltSteps_lineEdit.editingFinished.connect(self.update_fold_tilt_steps_setting)
         self.settingsTab.ctlSize_doubleSpinBox.valueChanged.connect(
             partial(self.updateSpinBox, self.settingsTab.ctlSize_doubleSpinBox, "ctlSize")
         )
@@ -287,6 +292,7 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
             detail_config.format_detail_column_depths_by_row(row_names, detail_column_depths_by_row)
         )
         self._sync_detail_curl_rot_mult_count(max(len(depths) for depths in detail_column_depths_by_row))
+        self._sync_fold_settings_count(len(row_names))
 
     def update_detail_curl_rot_mults_setting(self) -> None:
         try:
@@ -302,6 +308,34 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
         self._set_detail_curl_rot_mults_setting(detail_config.format_detail_curl_rot_multipliers(values))
         self.settingsTab.detailCurlRotMults_lineEdit.setText(self._detail_curl_rot_mults_setting())
 
+    def update_fold_fan_close_setting(self) -> None:
+        try:
+            row_names, _, _, _ = self._detail_settings_from_table()
+            values = detail_config.parse_fold_fan_close(
+                self.settingsTab.foldFanClose_lineEdit.text(),
+                row_names,
+            )
+        except RuntimeError as exc:
+            pm.displayWarning(str(exc))
+            self.settingsTab.foldFanClose_lineEdit.setText(self._fold_fan_close_setting())
+            return
+        self._set_fold_fan_close_setting(detail_config.format_per_row_floats(values))
+        self.settingsTab.foldFanClose_lineEdit.setText(self._fold_fan_close_setting())
+
+    def update_fold_tilt_steps_setting(self) -> None:
+        try:
+            row_names, _, _, _ = self._detail_settings_from_table()
+            values = detail_config.parse_fold_tilt_steps(
+                self.settingsTab.foldTiltSteps_lineEdit.text(),
+                row_names,
+            )
+        except RuntimeError as exc:
+            pm.displayWarning(str(exc))
+            self.settingsTab.foldTiltSteps_lineEdit.setText(self._fold_tilt_steps_setting())
+            return
+        self._set_fold_tilt_steps_setting(detail_config.format_per_row_floats(values))
+        self.settingsTab.foldTiltSteps_lineEdit.setText(self._fold_tilt_steps_setting())
+
     def _sync_detail_curl_rot_mult_count(self, column_count: int) -> None:
         values = detail_config.normalize_detail_curl_rot_multipliers(
             self._detail_curl_rot_mults_setting(),
@@ -310,6 +344,23 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
         formatted = detail_config.format_detail_curl_rot_multipliers(values)
         self._set_detail_curl_rot_mults_setting(formatted)
         self.settingsTab.detailCurlRotMults_lineEdit.setText(formatted)
+
+    def _sync_fold_settings_count(self, row_count: int) -> None:
+        fan_close_values = detail_config.normalize_fold_fan_close(
+            self._fold_fan_close_setting(),
+            row_count,
+        )
+        fan_close_formatted = detail_config.format_per_row_floats(fan_close_values)
+        self._set_fold_fan_close_setting(fan_close_formatted)
+        self.settingsTab.foldFanClose_lineEdit.setText(fan_close_formatted)
+
+        tilt_step_values = detail_config.normalize_fold_tilt_steps(
+            self._fold_tilt_steps_setting(),
+            row_count,
+        )
+        tilt_steps_formatted = detail_config.format_per_row_floats(tilt_step_values)
+        self._set_fold_tilt_steps_setting(tilt_steps_formatted)
+        self.settingsTab.foldTiltSteps_lineEdit.setText(tilt_steps_formatted)
 
     def _detail_curl_rot_mults_setting(self) -> str:
         if self.root.hasAttr("detailCurlRotMults"):
@@ -321,12 +372,39 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
             self.root.addAttr("detailCurlRotMults", dataType="string")
         self.root.attr("detailCurlRotMults").set(value)
 
+    def _fold_fan_close_setting(self) -> str:
+        if self.root.hasAttr("foldFanClose"):
+            return self.root.attr("foldFanClose").get()
+        return ""
+
+    def _set_fold_fan_close_setting(self, value: str) -> None:
+        if not self.root.hasAttr("foldFanClose"):
+            self.root.addAttr("foldFanClose", dataType="string")
+        self.root.attr("foldFanClose").set(value)
+
+    def _fold_tilt_steps_setting(self) -> str:
+        if self.root.hasAttr("foldTiltSteps"):
+            return self.root.attr("foldTiltSteps").get()
+        return ""
+
+    def _set_fold_tilt_steps_setting(self, value: str) -> None:
+        if not self.root.hasAttr("foldTiltSteps"):
+            self.root.addAttr("foldTiltSteps", dataType="string")
+        self.root.attr("foldTiltSteps").set(value)
+
     def _detail_column_count_from_root(self) -> int:
         try:
             _, _, _, detail_column_depths_by_row = self._detail_settings_from_root()
         except RuntimeError:
             return 1
         return max(len(depths) for depths in detail_column_depths_by_row)
+
+    def _row_count_from_root(self) -> int:
+        try:
+            row_names = detail_config.parse_row_names(self.root.attr("rowNames").get())
+        except RuntimeError:
+            return 1
+        return len(row_names)
 
     def _detail_settings_from_root(self) -> tuple[list[str], list[int], list[tuple[float, float]], list[list[float]]]:
         row_names = detail_config.parse_row_names(self.root.attr("rowNames").get())

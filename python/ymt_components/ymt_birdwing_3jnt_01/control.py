@@ -18,6 +18,8 @@ from mgear.core import anim_utils, pyqt as gqt
 import mgear.synoptic.utils as syn_uti
 
 from ymt_components.control import AbstractControllerButton
+from ymt_components.ymt_feather_ribbon_01 import control as feather_ribbon_control
+from ymt_shifter_utility import control_util
 from ymt_shifter_utility.type_protocols import PymelNode, SettablePlug, VectorLike, WorldPoint
 
 QtGui, QtCore, QtWidgets, wrapInstance = gqt.qt_import()
@@ -556,3 +558,189 @@ def ikFkMatch(
 
     if key:
         _key_controls(all_controls, cmds.currentTime(query=True))
+
+
+def _component_prefix(component_root: str) -> str:
+    if not cmds.objExists(component_root):
+        raise RuntimeError("ymt_birdwing_3jnt_01 component root does not exist: %s" % component_root)
+    if not component_root.endswith("root"):
+        raise RuntimeError("ymt_birdwing_3jnt_01 component root must end with root: %s" % component_root)
+    return component_root[: -len("root")]
+
+
+def _component_attr_stems(component_root: str) -> list[str]:
+    root_name = component_root.rsplit(":", 1)[-1]
+    if root_name.endswith("_root"):
+        root_name = root_name[: -len("_root")]
+    elif root_name.endswith("root"):
+        root_name = root_name[: -len("root")].rstrip("_")
+
+    stems = []
+    if "_" in root_name:
+        stems.append(root_name.rsplit("_", 1)[0])
+    stems.append(root_name)
+    return list(dict.fromkeys(stems))
+
+
+def _find_ui_host_attr(ui_host: str, component_root: str, suffix: str) -> Optional[str]:
+    attrs = cmds.listAttr(ui_host, string="*_" + suffix) or []
+    for stem in _component_attr_stems(component_root):
+        attr_name = stem + "_" + suffix
+        if attr_name in attrs:
+            return ui_host + "." + attr_name
+
+    if len(attrs) == 1:
+        return ui_host + "." + attrs[0]
+    return None
+
+
+def _find_fold_attr_from_weight(ui_host: str, pair_blend: str) -> Optional[str]:
+    source_plugs = cmds.listConnections(pair_blend + ".weight", source=True, destination=False, plugs=True) or []
+    for source_plug in source_plugs:
+        if source_plug.startswith(ui_host + "."):
+            return source_plug
+    return None
+
+
+def _is_rotate_locked_or_connected(node_name: str) -> bool:
+    for attr_name in ("rotate", "rotateX", "rotateY", "rotateZ"):
+        plug = node_name + "." + attr_name
+        if cmds.getAttr(plug, lock=True):
+            return True
+        if cmds.listConnections(plug, source=True, destination=False, plugs=True):
+            return True
+    return False
+
+
+def _is_plug_locked_or_connected(plug: str) -> bool:
+    if cmds.getAttr(plug, lock=True):
+        return True
+    return bool(cmds.listConnections(plug, source=True, destination=False, plugs=True))
+
+
+def _warn_if_effective_blend_has_ik(prefix: str, blend_attr: Optional[str]) -> None:
+    if blend_attr is None:
+        cmds.warning("ymt_birdwing_3jnt_01 could not resolve blend attr; skipping IK influence warning.")
+        return
+
+    pull_attr = prefix + "foldPull_clamp.outputR"
+    if not cmds.objExists(pull_attr):
+        cmds.warning("ymt_birdwing_3jnt_01 could not resolve fold pull clamp: %s" % pull_attr)
+        return
+
+    blend = float(cmds.getAttr(blend_attr))
+    pull = float(cmds.getAttr(pull_attr))
+    if blend * (1.0 - pull) > 0.001:
+        cmds.warning("ymt_birdwing_3jnt_01 visible pose contains IK influence; fold capture is FK-only.")
+
+
+def _warn_if_fk_translate_is_nonzero(prefix: str) -> None:
+    for index in range(3):
+        ctl = prefix + "fk%s_ctl" % index
+        if not cmds.objExists(ctl):
+            continue
+
+        translate = cmds.getAttr(ctl + ".translate")[0]
+        if any(abs(value) > 0.0001 for value in translate):
+            cmds.warning("ymt_birdwing_3jnt_01 FK translation is not captured: %s" % ctl)
+
+
+def _get_component_type_for_root(component_root: str) -> Optional[str]:
+    component_type = control_util.get_component_type(component_root)
+    if component_type is not None:
+        return component_type
+    if cmds.objExists(component_root + ".componentType"):
+        return str(cmds.getAttr(component_root + ".componentType"))
+    return None
+
+
+def _is_wing_fold_pair_blend(pair_blend: str, wing_prefix: str) -> bool:
+    return pair_blend in {
+        wing_prefix + "fk0_fold_pb",
+        wing_prefix + "fk1_fold_pb",
+        wing_prefix + "fk2_fold_pb",
+        wing_prefix + "fk3_fold_pb",
+        wing_prefix + "hand_fold_pb",
+    }
+
+
+def _has_non_wing_fold_pair_blends(component_root: str, wing_prefix: str) -> bool:
+    prefix = component_root[: -len("root")]
+    pair_blends = cmds.ls(prefix + "*_fold_pb", type="pairBlend") or []
+    return any(not _is_wing_fold_pair_blend(pair_blend, wing_prefix) for pair_blend in pair_blends)
+
+
+def _find_child_feather_roots(component_root: str, wing_prefix: str) -> list[str]:
+    descendants = cmds.listRelatives(component_root, allDescendents=True, type="transform") or []
+    feather_roots = []
+    for descendant in descendants:
+        if not descendant.endswith("_root"):
+            continue
+
+        component_type = _get_component_type_for_root(descendant)
+        if component_type == "ymt_feather_ribbon_01" or (
+            component_type is None and _has_non_wing_fold_pair_blends(descendant, wing_prefix)
+        ):
+            feather_roots.append(descendant)
+
+    return sorted(set(feather_roots))
+
+
+def _capture_fold_segment(prefix: str, index: int, pair_blend: str) -> None:
+    ctl = prefix + "fk%s_ctl" % index
+    fold_npo = prefix + "fk%s_fold_npo" % index
+    for node_name in (ctl, fold_npo):
+        if not cmds.objExists(node_name):
+            raise RuntimeError("ymt_birdwing_3jnt_01 missing fold capture node: %s" % node_name)
+
+    if _is_rotate_locked_or_connected(ctl):
+        cmds.warning("ymt_birdwing_3jnt_01 skipping fold capture for locked or connected rotate plugs: %s" % ctl)
+        return
+
+    rotate = control_util.compose_local_rotations_xyz_degrees(ctl, fold_npo)
+    cmds.setAttr(pair_blend + ".inRotate2", rotate[0], rotate[1], rotate[2])
+    cmds.setAttr(ctl + ".rotate", 0.0, 0.0, 0.0)
+
+
+def _set_fold_attr_to_one(fold_attr: str) -> None:
+    if _is_plug_locked_or_connected(fold_attr):
+        cmds.warning("ymt_birdwing_3jnt_01 fold attr is locked or connected; leaving it unchanged: %s" % fold_attr)
+        return
+    cmds.setAttr(fold_attr, 1.0)
+
+
+def capture_fold_pose(component_root: str, include_feathers: bool = True) -> None:
+    cmds.undoInfo(openChunk=True)
+    try:
+        prefix = _component_prefix(component_root)
+        pair_blends = []
+        for index in range(3):
+            pair_blend = prefix + "fk%s_fold_pb" % index
+            if not cmds.objExists(pair_blend):
+                raise RuntimeError("ymt_birdwing_3jnt_01 fold is not built on this rig: %s" % component_root)
+            pair_blends.append(pair_blend)
+
+        ui_host = control_util.get_ui_host(component_root)
+        if ui_host is None:
+            raise RuntimeError("ymt_birdwing_3jnt_01 could not find ui host: %s" % component_root)
+
+        blend_attr = _find_ui_host_attr(ui_host, component_root, "blend")
+        fold_attr = _find_ui_host_attr(ui_host, component_root, "fold")
+        if fold_attr is None:
+            fold_attr = _find_fold_attr_from_weight(ui_host, pair_blends[0])
+        if fold_attr is None:
+            raise RuntimeError("ymt_birdwing_3jnt_01 could not find fold attr on ui host: %s" % ui_host)
+
+        _warn_if_effective_blend_has_ik(prefix, blend_attr)
+        _warn_if_fk_translate_is_nonzero(prefix)
+
+        if include_feathers:
+            for feather_root in _find_child_feather_roots(component_root, prefix):
+                feather_ribbon_control.capture_fold_pose(feather_root)
+
+        for index, pair_blend in enumerate(pair_blends):
+            _capture_fold_segment(prefix, index, pair_blend)
+
+        _set_fold_attr_to_one(fold_attr)
+    finally:
+        cmds.undoInfo(closeChunk=True)

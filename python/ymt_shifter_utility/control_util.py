@@ -171,3 +171,38 @@ def get_attribute_choices(node: str, attr: str) -> List[str]:
         return []
 
     return res[0].split(":")
+
+
+def compose_local_rotations_xyz_degrees(child_node: str, parent_node: str) -> tuple[float, float, float]:
+    """Compose child_node's local rotation over parent_node's local rotation.
+
+    Row-vector convention: child rotation matrix is multiplied first. Reads each
+    node's rotate and rotateOrder, then returns XYZ euler degrees.
+    """
+
+    rotate_order_by_enum = {
+        0: om.MEulerRotation.kXYZ,
+        1: om.MEulerRotation.kYZX,
+        2: om.MEulerRotation.kZXY,
+        3: om.MEulerRotation.kXZY,
+        4: om.MEulerRotation.kYXZ,
+        5: om.MEulerRotation.kZYX,
+    }
+
+    def rotation_matrix(node_name: str) -> om.MMatrix:
+        rotate_values = cmds.getAttr(node_name + ".rotate")
+        rotate_x, rotate_y, rotate_z = rotate_values[0]
+        rotate_order = int(cmds.getAttr(node_name + ".rotateOrder"))
+        order = rotate_order_by_enum.get(rotate_order)
+        if order is None:
+            raise RuntimeError("Unsupported rotateOrder %s on %s." % (rotate_order, node_name))
+        return om.MEulerRotation(
+            math.radians(rotate_x),
+            math.radians(rotate_y),
+            math.radians(rotate_z),
+            order,
+        ).asMatrix()
+
+    matrix = rotation_matrix(child_node) * rotation_matrix(parent_node)
+    rotation = om.MTransformationMatrix(matrix).rotation().reorder(om.MEulerRotation.kXYZ)
+    return (math.degrees(rotation.x), math.degrees(rotation.y), math.degrees(rotation.z))

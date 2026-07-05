@@ -43,7 +43,7 @@ class Guide(guide.ComponentGuide):
     connectors: ClassVar[list[str]] = ["ymt_shoulder_01"]
 
     def postInit(self) -> None:
-        self.save_transform = ["root", "elbow", "wrist", "hand", "eff"]
+        self.save_transform = ["root", "elbow", "wrist", "hand", "eff", "foldElbow", "foldWrist", "foldHand", "foldEff"]
         self.save_blade = ["blade"]
 
     def addObjects(self) -> None:
@@ -60,6 +60,13 @@ class Guide(guide.ComponentGuide):
         cmds.setAttr(self.blade + ".bladeRollOffset", 90.0)
         attribute.unlockAttribute(self.blade, ["rx"])
         self.dispcrv = self.addDispCurve("crv", [self.root, self.elbow, self.wrist, self.hand, self.eff])
+        self.foldElbow = self.addLoc("foldElbow", self.root, elbow_pos)
+        self.foldWrist = self.addLoc("foldWrist", self.foldElbow, wrist_pos)
+        self.foldHand = self.addLoc("foldHand", self.foldWrist, hand_pos)
+        self.foldEff = self.addLoc("foldEff", self.foldHand, eff_pos)
+        self.fold_dispcrv = self.addDispCurve(
+            "foldCrv", [self.root, self.foldElbow, self.foldWrist, self.foldHand, self.foldEff]
+        )
 
     def addParameters(self) -> None:
         self.pBlend = self.addParam("blend", "double", 1, 0, 1)
@@ -70,6 +77,7 @@ class Guide(guide.ComponentGuide):
         self.pIKOrient = self.addParam("ikOri", "bool", True)
         self.pSoftIKRange = self.addParam("softIKRange", "double", 0.0, 0.0, 1.0)
         self.pSoftIKSpeed = self.addParam("softIKSpeed", "double", 2.5, 1.001, 10.0)
+        self.pFoldFkPullEnd = self.addParam("foldFkPullEnd", "double", 0.5, 0.001, 1.0)
 
         self.pDiv0 = self.addParam("div0", "long", 2, 0, None)
         self.pDiv1 = self.addParam("div1", "long", 2, 0, None)
@@ -130,6 +138,7 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
         self.populateCheck(self.settingsTab.smoothStep_checkBox, "smoothStep")
         self.settingsTab.softIKRange_spinBox.setValue(self.root.attr("softIKRange").get())
         self.settingsTab.softIKSpeed_spinBox.setValue(self.root.attr("softIKSpeed").get())
+        self.settingsTab.foldFkPullEnd_spinBox.setValue(self.root.attr("foldFkPullEnd").get())
         self.settingsTab.div0_spinBox.setValue(self.root.attr("div0").get())
         self.settingsTab.div1_spinBox.setValue(self.root.attr("div1").get())
         self.settingsTab.div2_spinBox.setValue(self.root.attr("div2").get())
@@ -181,6 +190,9 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
         )
         self.settingsTab.softIKSpeed_spinBox.valueChanged.connect(
             partial(self.updateSpinBox, self.settingsTab.softIKSpeed_spinBox, "softIKSpeed")
+        )
+        self.settingsTab.foldFkPullEnd_spinBox.valueChanged.connect(
+            partial(self.updateSpinBox, self.settingsTab.foldFkPullEnd_spinBox, "foldFkPullEnd")
         )
         self.settingsTab.div0_spinBox.valueChanged.connect(
             partial(self.updateSpinBox, self.settingsTab.div0_spinBox, "div0")

@@ -26,6 +26,7 @@ try:
 except ImportError:
     datatypes = importlib.import_module("pymel.core.datatypes")
 
+from maya import cmds
 from maya.api import OpenMaya as om2
 
 from mgear.shifter import component
@@ -33,6 +34,9 @@ from mgear.core import applyop, attribute, icon, node, primitive, transform, vec
 
 import ymt_shifter_utility as yu
 from ymt_shifter_utility.type_protocols import PymelNode
+
+
+FOLD_GUIDE_NAMES: tuple[str, str, str, str] = ("foldElbow", "foldWrist", "foldHand", "foldEff")
 
 
 class Component(component.Main):
@@ -125,6 +129,118 @@ class Component(component.Main):
         elbow_pos: datatypes.Vector = root_pos + (chain_dir * distance_on_chain) + (self.bend_dir * bend_height)
         return [root_pos, elbow_pos, wrist_pos]
 
+    def _fold_guide_positions(self) -> list[datatypes.Vector] | None:
+        positions: list[datatypes.Vector] = []
+        for name in FOLD_GUIDE_NAMES:
+            matrix: object = self.guide.tra.get(name)
+            if matrix is None:
+                return None
+            positions.append(datatypes.Vector(transform.getPositionFromMatrix(matrix)))
+        return positions
+
+    @staticmethod
+    def _as_mvector(value: datatypes.Vector) -> om2.MVector:
+        return om2.MVector(value[0], value[1], value[2])
+
+    def _normalized_fold_direction(self, value: datatypes.Vector, segment_index: int) -> om2.MVector:
+        direction: om2.MVector = self._as_mvector(value)
+        if direction.length() <= 0.000001:
+            raise RuntimeError("ymt_birdwing_3jnt_01 fold pose has zero-length segment %s." % segment_index)
+        direction.normalize()
+        return direction
+
+    @staticmethod
+    def _matrix_rotation_quaternion(matrix: object) -> om2.MQuaternion:
+        matrix_get: object = getattr(matrix, "get", None)
+        if callable(matrix_get):
+            values = matrix_get()
+        else:
+            values = matrix
+        first_value: object = values[0]
+        if isinstance(first_value, (int, float)):
+            matrix_values: tuple[float, ...] = tuple(float(values[index]) for index in range(16))
+        else:
+            matrix_values = tuple(float(values[row][column]) for row in range(4) for column in range(4))
+        return om2.MTransformationMatrix(om2.MMatrix(matrix_values)).rotation(True)
+
+    def _get_fold_local_delta(
+        self,
+        build_dir: datatypes.Vector,
+        fold_dir: datatypes.Vector,
+        frame_matrix: object,
+        rotation_acc: om2.MQuaternion,
+        segment_index: int,
+    ) -> tuple[tuple[float, float, float], om2.MQuaternion]:
+        build_direction: om2.MVector = self._normalized_fold_direction(build_dir, segment_index)
+        fold_direction: om2.MVector = self._normalized_fold_direction(fold_dir, segment_index)
+        current_direction: om2.MVector = build_direction.rotateBy(rotation_acc)
+        current_direction.normalize()
+        dot: float = max(-1.0, min(1.0, float(current_direction * fold_direction)))
+
+        if dot > 0.99999:
+            world_delta: om2.MQuaternion = om2.MQuaternion()
+        elif dot < -0.99999:
+            raise RuntimeError("ymt_birdwing_3jnt_01 fold pose reverses segment %s." % segment_index)
+        else:
+            world_delta = om2.MQuaternion(current_direction, fold_direction)
+
+        frame_rotation: om2.MQuaternion = self._matrix_rotation_quaternion(frame_matrix) * rotation_acc
+        local_delta: om2.MQuaternion = frame_rotation * world_delta * frame_rotation.inverse()
+        local_euler: om2.MEulerRotation = local_delta.asEulerRotation()
+        local_degrees: tuple[float, float, float] = (
+            math.degrees(local_euler.x),
+            math.degrees(local_euler.y),
+            math.degrees(local_euler.z),
+        )
+        return local_degrees, rotation_acc * world_delta
+
+    def _compute_fold_local_deltas(self) -> list[tuple[float, float, float]]:
+        build_positions: list[datatypes.Vector] = [*self.bone_positions, datatypes.Vector(self.guide.pos["eff"])]
+        fold_positions: list[datatypes.Vector] = self.fold_positions
+        rotation_acc: om2.MQuaternion = om2.MQuaternion()
+        local_deltas: list[tuple[float, float, float]] = []
+        for index, frame_matrix in enumerate(self.fold_frame_matrices):
+            local_delta, rotation_acc = self._get_fold_local_delta(
+                build_positions[index + 1] - build_positions[index],
+                fold_positions[index + 1] - fold_positions[index],
+                frame_matrix,
+                rotation_acc,
+                index,
+            )
+            local_deltas.append(local_delta)
+        return local_deltas
+
+    def _init_fold_pose(self) -> None:
+        fold_guide_positions: list[datatypes.Vector] | None = self._fold_guide_positions()
+        self.fold_enabled: bool = fold_guide_positions is not None
+        if fold_guide_positions is None:
+            return
+
+        self.fold_positions: list[datatypes.Vector] = [self.bone_positions[0], *fold_guide_positions]
+        self.fk_fold_npo: list[PymelNode] = []
+        self.fold_frame_matrices: list[object] = []
+
+    def _add_fk_fold_npo(self, index: int, npo: PymelNode, matrix: object) -> PymelNode:
+        if not self.fold_enabled:
+            return npo
+
+        self.fold_frame_matrices.append(matrix)
+        fold_npo: PymelNode = primitive.addTransform(npo, self.getName("fk%s_fold_npo" % index), matrix)
+        yu.setKeyableAttributesDontLockVisibility(fold_npo, [])
+        setattr(self, "fk%s_fold_npo" % index, fold_npo)
+        self.fk_fold_npo.append(fold_npo)
+        return fold_npo
+
+    def _get_fk_ref_parent(self, matrix: object) -> PymelNode:
+        if not self.fold_enabled:
+            return self.fk_ctl[2]
+
+        self.fold_frame_matrices.append(matrix)
+        self.hand_fold_npo: PymelNode = primitive.addTransform(self.fk_ctl[2], self.getName("hand_fold_npo"), matrix)
+        yu.setKeyableAttributesDontLockVisibility(self.hand_fold_npo, [])
+        self.fold_local_deltas: list[tuple[float, float, float]] = self._compute_fold_local_deltas()
+        return self.hand_fold_npo
+
     def addObjects(self) -> None:
         """Add all objects needed to create the component."""
 
@@ -159,6 +275,7 @@ class Component(component.Main):
             self.guide.pos["wrist"],
             self.guide.pos["hand"],
         ]
+        self._init_fold_pose()
         self.length0: float = vector.getDistance(self.bone_positions[0], self.bone_positions[1])
         self.length1: float = vector.getDistance(self.bone_positions[1], self.bone_positions[2])
         self.length2: float = vector.getDistance(self.bone_positions[2], self.bone_positions[3])
@@ -260,8 +377,9 @@ class Component(component.Main):
         ):
             t = transform.getTransformLookingAt(start, end, self.normal, "xz", self.negate)
             npo: PymelNode = primitive.addTransform(parent, self.getName("fk%s_npo" % index), t)
+            ctl_parent: PymelNode = self._add_fk_fold_npo(index, npo, t)
             ctl: PymelNode = self.addCtl(
-                npo,
+                ctl_parent,
                 "fk%s_ctl" % index,
                 t,
                 self.color_fk,
@@ -457,9 +575,9 @@ class Component(component.Main):
         self.hand_final_ref: PymelNode = primitive.addTransform(
             self.handIkRot_ctl, self.getName("hand_final_ref"), transform.getTransform(self.handIkRot_ctl)
         )
-        self.fk_ref: PymelNode = primitive.addTransform(
-            self.fk_ctl[2], self.getName("fk_ref"), transform.getTransform(self.handIkRot_ctl)
-        )
+        hand_fk_t: object = transform.getTransform(self.handIkRot_ctl)
+        fk_ref_parent: PymelNode = self._get_fk_ref_parent(hand_fk_t)
+        self.fk_ref: PymelNode = primitive.addTransform(fk_ref_parent, self.getName("fk_ref"), hand_fk_t)
 
         # Twist references and deformation drivers.
         self.rollRef: List[PymelNode] = primitive.add2DChain(
@@ -609,6 +727,8 @@ class Component(component.Main):
         """Create anim and setup attributes."""
 
         self.blend_att: object = self.addAnimParam("blend", "Fk/Ik Blend", "double", self.settings["blend"], 0, 1)
+        if self.fold_enabled:
+            self.fold_att: object = self.addAnimParam("fold", "Fold", "double", 0.0, 0.0, 1.0)
         self.volume_att: object = self.addAnimParam("volume", "Volume", "double", 1, 0, 1)
         self.roll_att: object = self.addAnimParam("roll", "Roll", "double", 0, -180, 180)
         self.wristControlMode_att: object = self.addAnimEnumParam(
@@ -667,15 +787,20 @@ class Component(component.Main):
                 self.upvref_att: object = self.addAnimEnumParam("upvref", "UpV Ref", 0, ref_names)
 
         if self.validProxyChannels:
-            attribute.addProxyAttribute(
+            proxy_attrs: list[object] = [self.blend_att]
+            if self.fold_enabled:
+                proxy_attrs.append(self.fold_att)
+            proxy_attrs.extend(
                 [
-                    self.blend_att,
                     self.soft_attr,
                     self.softSpeed_attr,
                     self.stretch_attr,
                     self.roundnessElbow_att,
                     self.roundnessWrist_att,
-                ],
+                ]
+            )
+            attribute.addProxyAttribute(
+                proxy_attrs,
                 [
                     self.fk0_ctl,
                     self.fk1_ctl,
@@ -728,6 +853,42 @@ class Component(component.Main):
         ]:
             node.createPairBlend(None, wing_bone, 0.5, 1, mid_jnt)
             pm.connectAttr(wing_bone + ".translate", mid_jnt + ".translate", f=True)
+
+    def _get_fold_pull_end(self) -> float:
+        if "foldFkPullEnd" not in self.settings:
+            raise RuntimeError("ymt_birdwing_3jnt_01 foldFkPullEnd setting is required when fold locators are present.")
+        fold_pull_end: float = float(self.settings["foldFkPullEnd"])
+        if fold_pull_end <= 0.0:
+            raise RuntimeError("ymt_birdwing_3jnt_01 foldFkPullEnd must be greater than zero.")
+        return fold_pull_end
+
+    def _connect_effective_blend(self) -> None:
+        if not self.fold_enabled:
+            self.effective_blend_att: object = self.blend_att
+            return
+
+        pull_node: PymelNode = node.createMulNode(self.fold_att, 1.0 / self._get_fold_pull_end())
+        clamp_node: str = cmds.createNode("clamp", name=self.getName("foldPull_clamp"))
+        cmds.setAttr(clamp_node + ".minR", 0.0)
+        cmds.setAttr(clamp_node + ".maxR", 1.0)
+        pm.connectAttr(pull_node.attr("outputX"), clamp_node + ".inputR", f=True)
+        inv_node: PymelNode = node.createReverseNode(clamp_node + ".outputR")
+        effective_node: PymelNode = node.createMulNode(self.blend_att, inv_node + ".outputX")
+        self.effective_blend_att = effective_node.attr("outputX")
+
+    def _connect_fold_offset_drivers(self) -> None:
+        if not self.fold_enabled:
+            return
+
+        fold_targets: list[PymelNode] = [*self.fk_fold_npo, self.hand_fold_npo]
+        for index, (local_delta, target) in enumerate(zip(self.fold_local_deltas, fold_targets)):
+            pair_blend: str = cmds.createNode("pairBlend", name=self.getName("fk%s_fold_pb" % index))
+            cmds.setAttr(pair_blend + ".rotInterpolation", 1)
+            if cmds.attributeQuery("rotateOrder", node=pair_blend, exists=True):
+                cmds.setAttr(pair_blend + ".rotateOrder", 0)
+            cmds.setAttr(pair_blend + ".inRotate2", local_delta[0], local_delta[1], local_delta[2])
+            cmds.connectAttr(str(self.fold_att), pair_blend + ".weight", force=True)
+            cmds.connectAttr(pair_blend + ".outRotate", target.name() + ".rotate", force=True)
 
     def _connect_upv_ref_operator(self) -> None:
         self.ikHandleUpvRef: PymelNode = primitive.addIkHandle(
@@ -802,8 +963,8 @@ class Component(component.Main):
             self.deform_anchor_refs["wrist"],
             maintainOffset=False,
         )
-        node.createReverseNode(self.blend_att, wrist_anchor_cns + ".target[0].targetWeight")
-        pm.connectAttr(self.blend_att, wrist_anchor_cns + ".target[1].targetWeight", f=True)
+        node.createReverseNode(self.effective_blend_att, wrist_anchor_cns + ".target[0].targetWeight")
+        pm.connectAttr(self.effective_blend_att, wrist_anchor_cns + ".target[1].targetWeight", f=True)
 
     def _connect_twist_and_aim(self) -> None:
         chain_pos: List[datatypes.Vector] = [x.getTranslation(space="world") for x in self.chain2bones]
@@ -889,7 +1050,7 @@ class Component(component.Main):
         pm.orientConstraint(self.hand_final_ref, self.wingBonesIK[-1], mo=True)
 
         for i, wing_bone in enumerate(self.wingBones):
-            node.createPairBlend(self.wingBonesFK[i], self.wingBonesIK[i], self.blend_att, 1, wing_bone)
+            node.createPairBlend(self.wingBonesFK[i], self.wingBonesIK[i], self.effective_blend_att, 1, wing_bone)
 
         self.ikhRollRef: PymelNode
         self.tmpCrv: PymelNode
@@ -939,7 +1100,7 @@ class Component(component.Main):
             pm.connectAttr(self.sq_att[i], o_node + ".squash")
 
     def _connect_visibility(self) -> None:
-        fkvis_node: PymelNode = node.createReverseNode(self.blend_att)
+        fkvis_node: PymelNode = node.createReverseNode(self.effective_blend_att)
         for ctrl in self.fk_ctl:
             for shp in ctrl.getShapes():
                 pm.connectAttr(fkvis_node + ".outputX", shp.attr("visibility"))
@@ -953,7 +1114,7 @@ class Component(component.Main):
             self.hand_line_ref,
         ]:
             for shp in ctrl.getShapes():
-                pm.connectAttr(self.blend_att, shp.attr("visibility"))
+                pm.connectAttr(self.effective_blend_att, shp.attr("visibility"))
 
     def _connect_match_refs(self) -> None:
         pm.connectAttr(self.rig.global_ctl + ".scale", self.setup + ".scale")
@@ -1003,6 +1164,8 @@ class Component(component.Main):
         soft_cond_node: PymelNode = node.createConditionNode(self.soft_attr, 0.0001, 4, 0.0001, self.soft_attr)
         self.soft_attr_cond: object = soft_cond_node.attr("outColorR")
         self._set_ik_solver()
+        self._connect_effective_blend()
+        self._connect_fold_offset_drivers()
 
         multJnt1_node: PymelNode = node.createMulNode(self.boneALenght_attr, self.boneALenghtMult_attr)
         multJnt2_node: PymelNode = node.createMulNode(self.boneBLenght_attr, self.boneBLenghtMult_attr)
@@ -1072,6 +1235,13 @@ class Component(component.Main):
 
     def get_feather_ribbon_refs(self) -> Dict[str, object]:
         """Return stable driver objects used by feather ribbon child components."""
+        metadata: dict[str, object] = {
+            "normal": self.normal,
+            "binormal": self.binormal,
+            "size": self.size,
+        }
+        if self.fold_enabled:
+            metadata["fold_attr"] = str(self.fold_att)
         return {
             "refs": {
                 "root": self.root,
@@ -1080,11 +1250,7 @@ class Component(component.Main):
                 "wrist": self.support_anchor_drivers["wrist_mid"],
                 "hand": self.deform_anchor_drivers["hand"],
             },
-            "metadata": {
-                "normal": self.normal,
-                "binormal": self.binormal,
-                "size": self.size,
-            },
+            "metadata": metadata,
         }
 
     def connect_standard(self) -> None:

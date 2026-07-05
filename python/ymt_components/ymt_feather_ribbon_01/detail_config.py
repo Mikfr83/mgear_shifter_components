@@ -237,6 +237,73 @@ def parse_detail_curl_rot_multiplier_values(raw_values: list[str]) -> list[float
     return values
 
 
+def parse_fold_fan_close(value: str, row_names: list[str]) -> list[float]:
+    raw_values = split_per_row_floats(value)
+    if len(raw_values) != len(row_names):
+        raise RuntimeError(
+            "ymt_feather_ribbon_01 foldFanClose requires exactly %s values, got %s."
+            % (len(row_names), len(raw_values))
+        )
+    return parse_per_row_float_values(raw_values, "foldFanClose", minimum=0.0, maximum=1.0)
+
+
+def normalize_fold_fan_close(value: str, row_count: int) -> list[float]:
+    raw_values = split_per_row_floats(value)
+    values = parse_per_row_float_values(raw_values, "foldFanClose", minimum=0.0, maximum=1.0)[:row_count]
+    while len(values) < row_count:
+        values.append(1.0)
+    return values
+
+
+def parse_fold_tilt_steps(value: str, row_names: list[str]) -> list[float]:
+    raw_values = split_per_row_floats(value)
+    if len(raw_values) != len(row_names):
+        raise RuntimeError(
+            "ymt_feather_ribbon_01 foldTiltSteps requires exactly %s values, got %s."
+            % (len(row_names), len(raw_values))
+        )
+    return parse_per_row_float_values(raw_values, "foldTiltSteps")
+
+
+def normalize_fold_tilt_steps(value: str, row_count: int) -> list[float]:
+    raw_values = split_per_row_floats(value)
+    values = parse_per_row_float_values(raw_values, "foldTiltSteps")[:row_count]
+    while len(values) < row_count:
+        values.append(0.0)
+    return values
+
+
+def split_per_row_floats(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def parse_per_row_float_values(
+    raw_values: list[str],
+    setting_name: str,
+    minimum: Optional[float] = None,  # noqa: UP045
+    maximum: Optional[float] = None,  # noqa: UP045
+) -> list[float]:
+    values = []
+    for item in raw_values:
+        try:
+            value = float(item)
+        except ValueError as exc:
+            raise RuntimeError(
+                "ymt_feather_ribbon_01 %s contains a non-numeric value: %s." % (setting_name, item)
+            ) from exc
+        below_minimum = minimum is not None and value < minimum
+        above_maximum = maximum is not None and value > maximum
+        if below_minimum or above_maximum:
+            minimum_label = format_float(minimum) if minimum is not None else "-inf"
+            maximum_label = format_float(maximum) if maximum is not None else "inf"
+            raise RuntimeError(
+                "ymt_feather_ribbon_01 %s values must be between %s and %s: %s."
+                % (setting_name, minimum_label, maximum_label, item)
+            )
+        values.append(value)
+    return values
+
+
 def format_detail_column_depths_by_row(row_names: list[str], depths_by_row: list[list[float]]) -> str:
     rows = []
     for row_name, depths in zip(row_names, depths_by_row):
@@ -245,6 +312,10 @@ def format_detail_column_depths_by_row(row_names: list[str], depths_by_row: list
 
 
 def format_detail_curl_rot_multipliers(values: list[float]) -> str:
+    return ", ".join(format_float(value) for value in values)
+
+
+def format_per_row_floats(values: list[float]) -> str:
     return ", ".join(format_float(value) for value in values)
 
 

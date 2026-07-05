@@ -8,7 +8,7 @@ QtGui, QtCore, QtWidgets, wrapInstance = gqt.qt_import()
 class Ui_Form(object):
     def setupUi(self, Form: QtWidgets.QWidget) -> None:
         Form.setObjectName("Form")
-        Form.resize(269, 596)
+        Form.resize(269, 620)
         self.gridLayout = QtWidgets.QGridLayout(Form)
         self.gridLayout.setObjectName("gridLayout")
         self.verticalLayout_2 = QtWidgets.QVBoxLayout()
@@ -81,6 +81,17 @@ class Ui_Form(object):
         self.softIKSpeed_spinBox.setSingleStep(0.1)
         self.softIKSpeed_spinBox.setObjectName("softIKSpeed_spinBox")
         self.formLayout.setWidget(4, QtWidgets.QFormLayout.FieldRole, self.softIKSpeed_spinBox)
+
+        self.foldFkPullEnd_label = QtWidgets.QLabel(self.groupBox)
+        self.foldFkPullEnd_label.setObjectName("foldFkPullEnd_label")
+        self.formLayout.setWidget(5, QtWidgets.QFormLayout.LabelRole, self.foldFkPullEnd_label)
+        self.foldFkPullEnd_spinBox = QtWidgets.QDoubleSpinBox(self.groupBox)
+        self.foldFkPullEnd_spinBox.setDecimals(3)
+        self.foldFkPullEnd_spinBox.setMinimum(0.001)
+        self.foldFkPullEnd_spinBox.setMaximum(1.0)
+        self.foldFkPullEnd_spinBox.setSingleStep(0.01)
+        self.foldFkPullEnd_spinBox.setObjectName("foldFkPullEnd_spinBox")
+        self.formLayout.setWidget(5, QtWidgets.QFormLayout.FieldRole, self.foldFkPullEnd_spinBox)
         self.verticalLayout.addLayout(self.formLayout)
 
         self.neutralRotation_checkBox = QtWidgets.QCheckBox(self.groupBox)
@@ -203,6 +214,7 @@ class Ui_Form(object):
         self.wristControlMode_comboBox.setItemText(1, gqt.fakeTranslate("Form", "Chain", None, -1))
         self.softIKRange_label.setText(gqt.fakeTranslate("Form", "Soft IK Range Ratio", None, -1))
         self.softIKSpeed_label.setText(gqt.fakeTranslate("Form", "Soft IK Speed", None, -1))
+        self.foldFkPullEnd_label.setText(gqt.fakeTranslate("Form", "Fold FK Pull End", None, -1))
         self.neutralRotation_checkBox.setText(
             gqt.fakeTranslate("Form", "World Space Orientation Align IK ctl", None, -1)
         )

@@ -44,6 +44,7 @@ if TYPE_CHECKING:
         fullName: str
         apos: List[VectorLike]
         blades: Dict[str, BladeLike]
+        tra: dict[str, MatrixLike]
         values: Dict[str, object]
 
     class ParentWingComponentLike(Protocol):
@@ -120,12 +121,27 @@ class Component(component.Main):
             self.settings["detailCurlRotMults"],
             self.detail_column_count,
         )
+        fold_fan_close_setting: object = self.settings.get("foldFanClose", "")
+        if fold_fan_close_setting is None:
+            fold_fan_close_setting = ""
+        self.fold_fan_close_by_row: list[float] = detail_config.normalize_fold_fan_close(
+            str(fold_fan_close_setting),
+            len(self.row_names),
+        )
+        fold_tilt_steps_setting: object = self.settings.get("foldTiltSteps", "")
+        if fold_tilt_steps_setting is None:
+            fold_tilt_steps_setting = ""
+        self.fold_tilt_steps_by_row: list[float] = detail_config.normalize_fold_tilt_steps(
+            str(fold_tilt_steps_setting),
+            len(self.row_names),
+        )
         self.anchor_positions: List[VectorLike] = self._get_anchor_positions()
         self.anchor_end_positions: List[VectorLike] = self._get_anchor_end_positions()
         self.anchor_segment_lengths: List[float] = self._get_anchor_segment_lengths()
         self.anchor_total_length: float = sum(self.anchor_segment_lengths)
         self.span_axis: VectorLike = self._get_parent_span_axis()
         self.wing_normal: VectorLike = self._get_parent_blade_normal()
+        self.fold_enabled: bool = self._parent_guide_has_fold_pose()
         self.depth_segments: List[Tuple[float, float]] = self._collect_depth_segments()
         self.depth_segment_centers: List[float] = self._collect_depth_segment_centers()
         self.surface_depths: List[float] = self._collect_surface_depths()
@@ -161,12 +177,16 @@ class Component(component.Main):
         self.detail_aim_refs_by_key: Dict[Tuple[str, int, int], PymelNode] = {}
         self.detail_chain_npos: List[PymelNode] = []
         self.detail_chain_npos_by_key: Dict[Tuple[str, int, int], PymelNode] = {}
+        self.detail_fold_npos: list[PymelNode] = []
+        self.detail_fold_npos_by_key: dict[tuple[str, int, int], PymelNode] = {}
         self.detail_aim_npos: List[PymelNode] = []
         self.detail_aim_npos_by_key: Dict[Tuple[str, int, int], PymelNode] = {}
         self.detail_curl_npos: List[PymelNode] = []
         self.detail_curl_npos_by_key: Dict[Tuple[str, int, int], PymelNode] = {}
         self.detail_ctls: List[PymelNode] = []
         self.detail_ctls_by_key: Dict[Tuple[str, int, int], PymelNode] = {}
+        self.fold_fan_yaw_by_key: dict[tuple[str, int, int], float] = {}
+        self.fold_tilt_by_key: dict[tuple[str, int, int], float] = {}
         self.detail_curl_rot_mult_attrs: List[object] = []
         self._add_detail_controls()
 
@@ -237,6 +257,10 @@ class Component(component.Main):
         self._connect_anchor_root_space(source_refs, "wrist", self.anchor_npos[2][0])
         pm.parentConstraint(source_refs["hand"], self.anchor_npos[3][0], mo=True)
         self._connect_curl_rotations(source_refs)
+        metadata: object = refs.get("metadata")
+        fold_attr: object = metadata.get("fold_attr") if isinstance(metadata, dict) else None
+        if self.fold_enabled and fold_attr:
+            self._connect_fold(str(fold_attr))
 
     def _add_anchor_controls(self) -> None:
         for anchor_index, name in enumerate(self.anchor_names):
@@ -312,6 +336,8 @@ class Component(component.Main):
         matrices_by_feather_part: Dict[Tuple[str, int, int], MatrixLike] = self._detail_chain_matrices(
             self.detail_specs
         )
+        if self.fold_enabled:
+            self._collect_fold_angles(matrices_by_feather_part)
         self._add_detail_rivet_refs(matrices_by_feather_part)
         for spec in self.detail_specs:
             detail_name: str = self._detail_name(spec)
@@ -335,8 +361,19 @@ class Component(component.Main):
                 self.getName("%s_npo" % detail_name),
                 matrix,
             )
+            aim_parent: PymelNode = chain_npo
+            if self.fold_enabled and col == 0:
+                fold_npo: PymelNode = primitive.addTransform(
+                    chain_npo,
+                    self.getName("%s_fold_npo" % detail_name),
+                    matrix,
+                )
+                ymt_util.setKeyableAttributesDontLockVisibility(fold_npo, [])
+                self.detail_fold_npos.append(fold_npo)
+                self.detail_fold_npos_by_key[key] = fold_npo
+                aim_parent = fold_npo
             aim_npo: PymelNode = primitive.addTransform(
-                chain_npo,
+                aim_parent,
                 self.getName("%s_aim_npo" % detail_name),
                 matrix,
             )
@@ -428,6 +465,82 @@ class Component(component.Main):
             else:
                 matrices[key] = self._single_detail_chain_matrix(spec)
         return matrices
+
+    def _collect_fold_angles(self, matrices_by_feather_part: dict[tuple[str, int, int], MatrixLike]) -> None:
+        specs_by_key: dict[tuple[str, int, int], DetailSpec] = self._detail_specs_by_key(self.detail_specs)
+        sections_by_row: dict[str, list[int]] = {}
+        for row, section, col in matrices_by_feather_part:
+            if col != 0:
+                continue
+            sections_by_row.setdefault(row, []).append(section)
+
+        row_index_by_name: dict[str, int] = {row_name: index for index, row_name in enumerate(self.row_names)}
+        self.fold_fan_yaw_by_key = {}
+        self.fold_tilt_by_key = {}
+        for row_name in self.row_names:
+            sections: list[int] = sorted(set(sections_by_row.get(row_name, [])))
+            if not sections:
+                continue
+            last_section: int = sections[-1]
+            ref_key: tuple[str, int, int] = (row_name, last_section, 0)
+            ref_matrix: MatrixLike = matrices_by_feather_part[ref_key]
+            ref_direction: VectorLike = self._matrix_axis_vector(ref_matrix, 0)
+
+            row_index: int = row_index_by_name[row_name]
+            for section in sections:
+                key: tuple[str, int, int] = (row_name, section, 0)
+                matrix: MatrixLike = matrices_by_feather_part[key]
+                spec: DetailSpec = specs_by_key[key]
+                detail_name: str = self._detail_name(spec)
+                yaw: float = self._fold_fan_close_yaw(
+                    self._matrix_axis_vector(matrix, 0),
+                    ref_direction,
+                    matrix,
+                    detail_name,
+                )
+                self.fold_fan_yaw_by_key[key] = yaw * self.fold_fan_close_by_row[row_index]
+                self.fold_tilt_by_key[key] = self.fold_tilt_steps_by_row[row_index] * section
+
+    def _fold_fan_close_yaw(
+        self,
+        direction: VectorLike,
+        ref_direction: VectorLike,
+        matrix: MatrixLike,
+        detail_name: str,
+    ) -> float:
+        normal: VectorLike = self.wing_normal
+        projected_direction: VectorLike = self._project_to_wing_plane(direction, detail_name)
+        projected_ref_direction: VectorLike = self._project_to_wing_plane(ref_direction, detail_name)
+        yaw: float = math.degrees(
+            math.atan2(
+                self._cross_dot(projected_direction, projected_ref_direction, normal),
+                projected_direction * projected_ref_direction,
+            )
+        )
+        local_y: VectorLike = self._matrix_axis_vector(matrix, 1)
+        if local_y * normal < 0.0:
+            yaw *= -1.0
+        return yaw
+
+    def _project_to_wing_plane(self, direction: VectorLike, detail_name: str) -> VectorLike:
+        normal: VectorLike = self.wing_normal
+        projected: VectorLike = direction - (normal * (direction * normal))
+        if projected.length() < 0.0001:
+            raise RuntimeError(
+                "ymt_feather_ribbon_01 fold fan close requires non-degenerate feather direction: %s." % detail_name
+            )
+        return projected.normal()
+
+    def _cross_dot(self, a: VectorLike, b: VectorLike, normal: VectorLike) -> float:
+        cross_x: float = (a.y * b.z) - (a.z * b.y)
+        cross_y: float = (a.z * b.x) - (a.x * b.z)
+        cross_z: float = (a.x * b.y) - (a.y * b.x)
+        return (cross_x * normal.x) + (cross_y * normal.y) + (cross_z * normal.z)
+
+    def _matrix_axis_vector(self, matrix: MatrixLike, axis_index: int) -> VectorLike:
+        values: tuple[float, ...] = self._matrix_values(matrix)
+        offset: int = axis_index * 4
+        return datatypes.Vector(values[offset], values[offset + 1], values[offset + 2])
 
     def _detail_specs_by_key(self, specs: List[DetailSpec]) -> Dict[Tuple[str, int, int], DetailSpec]:
         return {
@@ -956,6 +1069,21 @@ class Component(component.Main):
             start_name: str = self.anchor_names[segment_index]
             end_name: str = self.anchor_names[segment_index + 1]
             self._connect_curl_rotation_blend(segment_index, npo, refs[start_name], refs[end_name])
+
+    def _connect_fold(self, fold_plug: str) -> None:
+        for key, fold_npo in self.detail_fold_npos_by_key.items():
+            yaw: float = self.fold_fan_yaw_by_key.get(key, 0.0)
+            tilt: float = self.fold_tilt_by_key.get(key, 0.0)
+            row, section, col = key
+            if section < 0:
+                detail_name: str = "%s_%02d" % (row, col)
+            else:
+                detail_name = "%s_%02d_%02d" % key
+            pair_blend: str = cmds.createNode("pairBlend", name=self.getName("%s_fold_pb" % detail_name))
+            cmds.setAttr(pair_blend + ".rotInterpolation", 1)
+            cmds.setAttr(pair_blend + ".inRotate2", tilt, yaw, 0.0)
+            cmds.connectAttr(fold_plug, pair_blend + ".weight", force=True)
+            cmds.connectAttr(pair_blend + ".outRotate", self._node_name(fold_npo) + ".rotate", force=True)
 
     def _connect_curl_deforms(self) -> None:
         for ctl, deform in zip(self.curl_ctls, self.curl_deforms):
@@ -1732,6 +1860,13 @@ class Component(component.Main):
         if normal.length() < 0.001:
             raise RuntimeError("ymt_feather_ribbon_01 requires a valid parent wing blade normal.")
         return normal.normal()
+
+    def _parent_guide_has_fold_pose(self) -> bool:
+        parent_guide = self._get_parent_wing_guide()
+        if parent_guide is None:
+            return False
+        tra: dict[str, object] = cast("dict[str, object]", getattr(parent_guide, "tra", {}))
+        return all(name in tra for name in ("foldElbow", "foldWrist", "foldHand", "foldEff"))
 
     def _get_parent_guide_anchor_positions(self) -> Optional[List[VectorLike]]:  # noqa: UP045
         parent_guide: Optional[ParentWingGuideLike] = self._get_parent_wing_guide()
