@@ -217,8 +217,11 @@ def import_driven_keys(
     Returns a list of newly created animCurve nodes.
     """
     if isinstance(data, list):
+        results: list[str] = []
         for d in data:
-            import_driven_keys(d, namespace_map=namespace_map, strict=strict)
+            r = import_driven_keys(d, namespace_map=namespace_map, strict=strict)
+            results.extend(r)
+        return results
 
     if not isinstance(data, dict):
         raise TypeError("Invalid data format: expected a list of dicts.")
