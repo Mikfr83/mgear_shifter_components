@@ -96,9 +96,11 @@ unavailable (pattern: `_ensure_rotation_driver_plugin` in
   perpendicular to the axis), column index increasing clockwise when viewed
   from the waist looking down the axis toward the hem.
 - Guide parameters: `rows` (long, min 2), `cols` (long, min 3), `ctlSize`
-  (double), `addJoints` (bool), `collision` (double, 0..1, default 1.0),
+  (double), `addJoints` (bool), `collision` (double, 0..1, default 0.2),
   `tightness` (double, 0..1, default 0.5), `falloff` (double, -1..1,
-  default 0.0), and the leg ring size: `ringScaleX`/`ringScaleZ` (double,
+  default -1.0) - the collision/falloff defaults are the rigger's tuned
+  values from Maya testing, deliberately diverging from the node defaults
+  (1.0 / 0.0) - and the leg ring size: `ringScaleX`/`ringScaleZ` (double,
   min 0.001, default 1.0, multipliers over the hip half-distance) and
   `ringScaleY` (double, min 0.001, default 1.0, the node's ring height
   coefficient, passed through). Ranges mirror the node attribute ranges from
@@ -180,7 +182,9 @@ unavailable (pattern: `_ensure_rotation_driver_plugin` in
 ### Surface, drivers, controls, joints
 
 - `outputSurface` -> `rebuildSurface` (direction = V, spansU = 1, spansV = 4,
-  cubic degree, keepRange = 0 so V renormalizes to [0, 1]) -> NURBS shape under
+  cubic degree, keepRange = 0, which is the Keep-original-range enum; the
+  build reads the rebuilt shape's actual min/max UV, so the mapping is
+  invariant to this choice) -> NURBS shape under
   a transform named `getName("colliderSurface")` kept at identity world
   transform with `inheritsTransform` off and hidden. World-space CVs plus a
   non-identity container would double-transform; identity is part of the
