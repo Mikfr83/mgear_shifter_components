@@ -446,9 +446,9 @@ class Component(component.Main):
         front_offset = front_dir * front_amount
         for i, cv in enumerate(cvs):
             new_pos = [
-                cv[0] + front_offSet[0],
-                cv[1] + front_offSet[1],
-                cv[2] + front_offSet[2],
+                cv[0] + front_offset[0],
+                cv[1] + front_offset[1],
+                cv[2] + front_offset[2],
             ]
             ymt_util.setCurveCV(self.upv_crv, i, new_pos, space="world")
 
