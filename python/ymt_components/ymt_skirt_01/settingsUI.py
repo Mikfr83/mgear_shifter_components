@@ -54,6 +54,9 @@ class Ui_Form(object):
         self.addJoints_checkBox = QtWidgets.QCheckBox(self.groupBox)
         self.formLayout.setWidget(4, QtWidgets.QFormLayout.FieldRole, self.addJoints_checkBox)
 
+        self.postCollision_checkBox = QtWidgets.QCheckBox(self.groupBox)
+        self.formLayout.setWidget(11, QtWidgets.QFormLayout.FieldRole, self.postCollision_checkBox)
+
         self.collision_label = QtWidgets.QLabel(self.groupBox)
         self.collision_doubleSpinBox = QtWidgets.QDoubleSpinBox(self.groupBox)
         self.collision_doubleSpinBox.setDecimals(3)
@@ -109,6 +112,7 @@ class Ui_Form(object):
         self.rebuildGrid_pushButton.setText(gqt.fakeTranslate("Form", "Rebuild Grid Locators", None, -1))
         self.ctlSize_label.setText(gqt.fakeTranslate("Form", "Ctl Size", None, -1))
         self.addJoints_checkBox.setText(gqt.fakeTranslate("Form", "Add Joints", None, -1))
+        self.postCollision_checkBox.setText(gqt.fakeTranslate("Form", "Post Collision (2nd pass)", None, -1))
         self.collision_label.setText(gqt.fakeTranslate("Form", "Collision", None, -1))
         self.tightness_label.setText(gqt.fakeTranslate("Form", "Tightness", None, -1))
         self.falloff_label.setText(gqt.fakeTranslate("Form", "Falloff", None, -1))

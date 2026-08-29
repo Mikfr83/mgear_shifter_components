@@ -37,7 +37,7 @@ QtWidgets = qt.QtWidgets
 AUTHOR = "yamahigashi"
 URL = "yamahigashi.dev"
 EMAIL = "yamahigashi@gmail.com"
-VERSION = [1, 3, 1]
+VERSION = [1, 4, 0]
 TYPE = "ymt_skirt_01"
 NAME = "skirt"
 DESCRIPTION = "Collider-driven FK skirt grid."
@@ -94,6 +94,7 @@ class Guide(guide.ComponentGuide):
         self.pCols = self.addParam("cols", "long", 8, 3, None)
         self.pCtlSize = self.addParam("ctlSize", "double", 1.0, 0.001, None)
         self.pAddJoints = self.addParam("addJoints", "bool", True)
+        self.pPostCollision = self.addParam("postCollision", "bool", True)
         self.pCollision = self.addParam("collision", "double", 0.2, 0.0, 1.0)
         self.pTightness = self.addParam("tightness", "double", 0.5, 0.0, 1.0)
         self.pFalloff = self.addParam("falloff", "double", -1.0, -1.0, 1.0)
@@ -198,6 +199,7 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
         self.settingsTab.cols_spinBox.setValue(self.root.attr("cols").get())
         self.settingsTab.ctlSize_doubleSpinBox.setValue(self.root.attr("ctlSize").get())
         self.populateCheck(self.settingsTab.addJoints_checkBox, "addJoints")
+        self.populateCheck(self.settingsTab.postCollision_checkBox, "postCollision")
         self.settingsTab.collision_doubleSpinBox.setValue(self.root.attr("collision").get())
         self.settingsTab.tightness_doubleSpinBox.setValue(self.root.attr("tightness").get())
         self.settingsTab.falloff_doubleSpinBox.setValue(self.root.attr("falloff").get())
@@ -235,6 +237,9 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
         )
         self.settingsTab.addJoints_checkBox.stateChanged.connect(
             partial(self.updateCheck, self.settingsTab.addJoints_checkBox, "addJoints")
+        )
+        self.settingsTab.postCollision_checkBox.stateChanged.connect(
+            partial(self.updateCheck, self.settingsTab.postCollision_checkBox, "postCollision")
         )
         self.settingsTab.collision_doubleSpinBox.valueChanged.connect(
             partial(self.updateSpinBox, self.settingsTab.collision_doubleSpinBox, "collision")

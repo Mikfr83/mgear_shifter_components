@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 
 AUTHOR = "yamahigashi"
-VERSION = [1, 3, 1]
+VERSION = [1, 4, 0]
 TYPE = "ymt_skirt_01"
 NAME = "skirt"
 
@@ -162,6 +162,7 @@ class Component(component.Main):
         self._fit_cone()
         self.ctl_size = self.guide_size * self._validated_positive_setting("ctlSize") * 0.1
         self.add_joints = self._validated_bool_setting("addJoints")
+        self.post_collision = self._validated_bool_setting("postCollision")
         self._validate_animator_settings()
 
         self.refs_group = self._create_refs_group()
@@ -180,6 +181,8 @@ class Component(component.Main):
         self._create_surface_drivers_and_controls()
         self._assert_ring_control_identity()
         self._skin_rebuilt_surface()
+        if self.post_collision:
+            self._create_post_collision_deformer()
         if not self.settings.get("ui_host"):
             self.uihost = self.fk_ctls[0]
 
@@ -197,6 +200,11 @@ class Component(component.Main):
         cmds.connectAttr(str(self.collision_att), self.collider_node + ".collision", force=True)
         cmds.connectAttr(str(self.tightness_att), self.collider_node + ".tightness", force=True)
         cmds.connectAttr(str(self.falloff_att), self.collider_node + ".falloff", force=True)
+        if self.post_collision:
+            self.post_collision_att = self.addAnimParam("postCollision", "Post Collision", "double", 1.0, 0.0, 2.0)
+            self.post_falloff_att = self.addAnimParam("postFalloff", "Post Falloff", "double", 0.2, 0.0, 1.0)
+            cmds.connectAttr(str(self.post_collision_att), self.post_collide_deformer + ".collision", force=True)
+            cmds.connectAttr(str(self.post_falloff_att), self.post_collide_deformer + ".falloff", force=True)
 
     def setRelation(self) -> None:
         self.relatives["root"] = self.fk_ctls[0]
@@ -860,6 +868,7 @@ class Component(component.Main):
         cmds.setAttr(self.collider_node + ".bellScale1", 1.0)
         cmds.setAttr(self.collider_node + ".ringScale1", self.ring_height_scale)
         self.root_scale_decompose = scale_decompose
+        self.ring_scale_multiply = ring_multiply
 
     def _create_scale_multiply(
         self,
@@ -1041,6 +1050,45 @@ class Component(component.Main):
                 force=True,
             )
         self.ring_skin_cluster = skin_cluster
+
+    def _create_post_collision_deformer(self) -> None:
+        maya_version = cmds.about(version=True)
+        node_types = cmds.pluginInfo("colliders", query=True, dependNode=True) or []
+        if "skirtCollideDeformer" not in node_types:
+            raise RuntimeError(
+                "ymt_skirt_01 postCollision requires a colliders plugin registering skirtCollideDeformer"
+                " for Maya %s; rebuild the plugin or disable the postCollision guide setting." % maya_version
+            )
+        result = cmds.deformer(
+            self.collider_surface_shape,
+            type="skirtCollideDeformer",
+            name=self.getName("postCollide_def"),
+        )
+        if not result:
+            raise RuntimeError("ymt_skirt_01 could not create the skirtCollideDeformer.")
+        deformer = result[0]
+        attributes = {
+            "waist": "bellMatrix",
+            "hip_L": "leftHipMatrix",
+            "knee_L": "leftKneeMatrix",
+            "heel_L": "leftHeelMatrix",
+            "hip_R": "rightHipMatrix",
+            "knee_R": "rightKneeMatrix",
+            "heel_R": "rightHeelMatrix",
+        }
+        for name, deformer_attribute in attributes.items():
+            cmds.connectAttr(
+                self._node_name(self.skirt_collider_refs[name]) + ".worldMatrix[0]",
+                deformer + "." + deformer_attribute,
+                force=True,
+            )
+        cmds.setAttr(deformer + ".skirtType", self.skirt_type)
+        cmds.setAttr(deformer + ".leftRingAxis", 0)
+        cmds.setAttr(deformer + ".rightRingAxis", 0)
+        cmds.connectAttr(self.ring_scale_multiply + ".outputX", deformer + ".ringScale0", force=True)
+        cmds.connectAttr(self.ring_scale_multiply + ".outputZ", deformer + ".ringScale2", force=True)
+        cmds.setAttr(deformer + ".ringScale1", self.ring_height_scale)
+        self.post_collide_deformer = deformer
 
     def _create_surface_drivers_and_controls(self) -> None:
         for row in range(self.rows):
