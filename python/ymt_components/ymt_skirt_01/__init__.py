@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 
 AUTHOR = "yamahigashi"
-VERSION = [1, 4, 0]
+VERSION = [1, 6, 0]
 TYPE = "ymt_skirt_01"
 NAME = "skirt"
 
@@ -163,6 +163,7 @@ class Component(component.Main):
         self.ctl_size = self.guide_size * self._validated_positive_setting("ctlSize") * 0.1
         self.add_joints = self._validated_bool_setting("addJoints")
         self.post_collision = self._validated_bool_setting("postCollision")
+        self.wave = self._validated_bool_setting("wave")
         self._validate_animator_settings()
 
         self.refs_group = self._create_refs_group()
@@ -181,8 +182,19 @@ class Component(component.Main):
         self._create_surface_drivers_and_controls()
         self._assert_ring_control_identity()
         self._skin_rebuilt_surface()
+        # cmds.deformer appends to the chain: wave MUST be created before the
+        # corrective pass so the order is skin -> wave -> collide (ADR-0004).
+        if self.wave:
+            self._create_wave_deformer()
+            if not self.post_collision:
+                cmds.warning(
+                    "ymt_skirt_01: wave is enabled without postCollision;"
+                    " inward wave tucks can penetrate the legs uncorrected."
+                )
         if self.post_collision:
             self._create_post_collision_deformer()
+        if self.wave:
+            self._assert_surface_deformer_order()
         if not self.settings.get("ui_host"):
             self.uihost = self.fk_ctls[0]
 
@@ -205,6 +217,48 @@ class Component(component.Main):
             self.post_falloff_att = self.addAnimParam("postFalloff", "Post Falloff", "double", 0.2, 0.0, 1.0)
             cmds.connectAttr(str(self.post_collision_att), self.post_collide_deformer + ".collision", force=True)
             cmds.connectAttr(str(self.post_falloff_att), self.post_collide_deformer + ".falloff", force=True)
+        if self.wave:
+            # Host channels are grouped by prefix: sway* = continuous layers
+            # (periodic wave + noise), send* = the one-shot wave send.
+            self.wave_amplitude_att = self.addAnimParam("waveAmplitude", "Wave Amplitude", "double", 1.0, 0.0, 3.0)
+            self.sway_amount_att = self.addAnimParam("swayAmount", "Sway Amount", "double", 0.0, 0.0, 2.0)
+            self.sway_phase_att = self.addAnimParam("swayPhase", "Sway Phase", "double", 0.0)
+            self.sway_spin_att = self.addAnimParam("swaySpin", "Sway Spin", "double", 0.0)
+            self.sway_noise_att = self.addAnimParam("swayNoise", "Sway Noise", "double", 0.0, 0.0, 2.0)
+            self.sway_noise_phase_att = self.addAnimParam("swayNoisePhase", "Sway Noise Phase", "double", 0.0)
+            self.send_dir_x_att = self.addAnimParam("sendDirX", "Send Dir X", "double", -0.5)
+            self.send_dir_z_att = self.addAnimParam("sendDirZ", "Send Dir Z", "double", 0.0)
+            # Max 2.0: a crest fully clears the hem at impulsePosition >= 1 + impulseWidth (width max 1.0).
+            self.send_pos_att = self.addAnimParam("sendPos", "Send Pos", "double", 0.0, 0.0, 2.0)
+            connections = (
+                (self.wave_amplitude_att, "amplitude"),
+                (self.sway_amount_att, "idleAmplitude"),
+                (self.sway_phase_att, "wavePhaseV"),
+                (self.sway_spin_att, "wavePhaseU"),
+                (self.sway_noise_att, "noiseAmplitude"),
+                (self.sway_noise_phase_att, "noisePhase"),
+                (self.send_dir_x_att, "impulseX"),
+                (self.send_dir_z_att, "impulseZ"),
+                (self.send_pos_att, "impulsePosition"),
+            )
+            for attr, deformer_attribute in connections:
+                cmds.connectAttr(str(attr), self.wave_deformer + "." + deformer_attribute, force=True)
+            soft_ranges = (
+                (self.sway_phase_att, -5.0, 5.0),
+                (self.sway_spin_att, -5.0, 5.0),
+                (self.sway_noise_phase_att, -5.0, 5.0),
+                (self.send_dir_x_att, -2.0, 2.0),
+                (self.send_dir_z_att, -2.0, 2.0),
+            )
+            for attr, soft_min, soft_max in soft_ranges:
+                cmds.addAttr(
+                    str(attr),
+                    edit=True,
+                    hasSoftMinValue=True,
+                    softMinValue=soft_min,
+                    hasSoftMaxValue=True,
+                    softMaxValue=soft_max,
+                )
 
     def setRelation(self) -> None:
         self.relatives["root"] = self.fk_ctls[0]
@@ -910,9 +964,16 @@ class Component(component.Main):
         cmds.setAttr(surface + ".visibility", False)
         shape = cmds.createNode("nurbsSurface", name=self.getName("colliderSurfaceShape"), parent=surface)
         rebuild = cmds.createNode("rebuildSurface", name=self.getName("colliderSurface_rebuild"))
-        cmds.setAttr(rebuild + ".direction", 1)
-        cmds.setAttr(rebuild + ".spansU", 1)
-        cmds.setAttr(rebuild + ".spansV", 4)
+        spans_u = max(0, int(self.settings.get("rebuildSpansU", 0)))
+        spans_v = max(1, int(self.settings.get("rebuildSpansV", 4)))
+        if spans_u > 0:
+            cmds.setAttr(rebuild + ".direction", 2)
+            cmds.setAttr(rebuild + ".spansU", spans_u)
+        else:
+            # 0 keeps the collider's own circumference CVs (rebuild V only).
+            cmds.setAttr(rebuild + ".direction", 1)
+            cmds.setAttr(rebuild + ".spansU", 1)
+        cmds.setAttr(rebuild + ".spansV", spans_v)
         cmds.setAttr(rebuild + ".degreeU", 3)
         cmds.setAttr(rebuild + ".degreeV", 3)
         cmds.setAttr(rebuild + ".keepRange", 0)
@@ -1089,6 +1150,48 @@ class Component(component.Main):
         cmds.connectAttr(self.ring_scale_multiply + ".outputZ", deformer + ".ringScale2", force=True)
         cmds.setAttr(deformer + ".ringScale1", self.ring_height_scale)
         self.post_collide_deformer = deformer
+
+    def _create_wave_deformer(self) -> None:
+        maya_version = cmds.about(version=True)
+        node_types = cmds.pluginInfo("colliders", query=True, dependNode=True) or []
+        if "skirtWaveDeformer" not in node_types:
+            raise RuntimeError(
+                "ymt_skirt_01 wave requires a colliders plugin registering skirtWaveDeformer"
+                " for Maya %s; rebuild the plugin or disable the wave guide setting." % maya_version
+            )
+        result = cmds.deformer(
+            self.collider_surface_shape,
+            type="skirtWaveDeformer",
+            name=self.getName("wave_def"),
+        )
+        if not result:
+            raise RuntimeError("ymt_skirt_01 could not create the skirtWaveDeformer.")
+        deformer = result[0]
+        cmds.connectAttr(
+            self._node_name(self.skirt_collider_refs["waist"]) + ".worldMatrix[0]",
+            deformer + ".bellMatrix",
+            force=True,
+        )
+        self.wave_deformer = deformer
+
+    def _assert_surface_deformer_order(self) -> None:
+        # listHistory returns downstream-first, so the required chain
+        # skin -> wave -> collide must appear reversed (ADR-0004 invariant).
+        history = cmds.listHistory(self.collider_surface_shape, pruneDagObjects=True) or []
+        expected = [self.wave_deformer, self.ring_skin_cluster]
+        if self.post_collision:
+            expected.insert(0, self.post_collide_deformer)
+        indices = []
+        for node in expected:
+            if node not in history:
+                raise RuntimeError("ymt_skirt_01: %s is missing from the surface deformation history." % node)
+            indices.append(history.index(node))
+        if indices != sorted(indices):
+            actual = [node for node in history if node in expected]
+            raise RuntimeError(
+                "ymt_skirt_01: surface deformer order must be ringSkin -> wave -> postCollide;"
+                " listHistory (downstream first) returned %s." % " <- ".join(actual)
+            )
 
     def _create_surface_drivers_and_controls(self) -> None:
         for row in range(self.rows):

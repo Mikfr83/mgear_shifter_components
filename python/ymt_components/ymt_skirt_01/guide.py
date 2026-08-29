@@ -37,7 +37,7 @@ QtWidgets = qt.QtWidgets
 AUTHOR = "yamahigashi"
 URL = "yamahigashi.dev"
 EMAIL = "yamahigashi@gmail.com"
-VERSION = [1, 4, 0]
+VERSION = [1, 6, 0]
 TYPE = "ymt_skirt_01"
 NAME = "skirt"
 DESCRIPTION = "Collider-driven FK skirt grid."
@@ -95,6 +95,11 @@ class Guide(guide.ComponentGuide):
         self.pCtlSize = self.addParam("ctlSize", "double", 1.0, 0.001, None)
         self.pAddJoints = self.addParam("addJoints", "bool", True)
         self.pPostCollision = self.addParam("postCollision", "bool", True)
+        self.pWave = self.addParam("wave", "bool", False)
+        # Rebuilt-surface density: U 0 = keep the collider's own circumference
+        # CVs; raising it densifies the surface the collide/wave passes push.
+        self.pRebuildSpansU = self.addParam("rebuildSpansU", "long", 0, 0, None)
+        self.pRebuildSpansV = self.addParam("rebuildSpansV", "long", 4, 1, None)
         self.pCollision = self.addParam("collision", "double", 0.2, 0.0, 1.0)
         self.pTightness = self.addParam("tightness", "double", 0.5, 0.0, 1.0)
         self.pFalloff = self.addParam("falloff", "double", -1.0, -1.0, 1.0)
@@ -200,6 +205,9 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
         self.settingsTab.ctlSize_doubleSpinBox.setValue(self.root.attr("ctlSize").get())
         self.populateCheck(self.settingsTab.addJoints_checkBox, "addJoints")
         self.populateCheck(self.settingsTab.postCollision_checkBox, "postCollision")
+        self.populateCheck(self.settingsTab.wave_checkBox, "wave")
+        self.settingsTab.rebuildSpansU_spinBox.setValue(self.root.attr("rebuildSpansU").get())
+        self.settingsTab.rebuildSpansV_spinBox.setValue(self.root.attr("rebuildSpansV").get())
         self.settingsTab.collision_doubleSpinBox.setValue(self.root.attr("collision").get())
         self.settingsTab.tightness_doubleSpinBox.setValue(self.root.attr("tightness").get())
         self.settingsTab.falloff_doubleSpinBox.setValue(self.root.attr("falloff").get())
@@ -240,6 +248,15 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
         )
         self.settingsTab.postCollision_checkBox.stateChanged.connect(
             partial(self.updateCheck, self.settingsTab.postCollision_checkBox, "postCollision")
+        )
+        self.settingsTab.wave_checkBox.stateChanged.connect(
+            partial(self.updateCheck, self.settingsTab.wave_checkBox, "wave")
+        )
+        self.settingsTab.rebuildSpansU_spinBox.valueChanged.connect(
+            partial(self.updateSpinBox, self.settingsTab.rebuildSpansU_spinBox, "rebuildSpansU")
+        )
+        self.settingsTab.rebuildSpansV_spinBox.valueChanged.connect(
+            partial(self.updateSpinBox, self.settingsTab.rebuildSpansV_spinBox, "rebuildSpansV")
         )
         self.settingsTab.collision_doubleSpinBox.valueChanged.connect(
             partial(self.updateSpinBox, self.settingsTab.collision_doubleSpinBox, "collision")

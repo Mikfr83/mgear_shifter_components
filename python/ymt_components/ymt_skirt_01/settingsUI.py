@@ -57,6 +57,23 @@ class Ui_Form(object):
         self.postCollision_checkBox = QtWidgets.QCheckBox(self.groupBox)
         self.formLayout.setWidget(11, QtWidgets.QFormLayout.FieldRole, self.postCollision_checkBox)
 
+        self.wave_checkBox = QtWidgets.QCheckBox(self.groupBox)
+        self.formLayout.setWidget(12, QtWidgets.QFormLayout.FieldRole, self.wave_checkBox)
+
+        self.rebuildSpansU_label = QtWidgets.QLabel(self.groupBox)
+        self.rebuildSpansU_spinBox = QtWidgets.QSpinBox(self.groupBox)
+        self.rebuildSpansU_spinBox.setMinimum(0)
+        self.rebuildSpansU_spinBox.setMaximum(64)
+        self.formLayout.setWidget(13, QtWidgets.QFormLayout.LabelRole, self.rebuildSpansU_label)
+        self.formLayout.setWidget(13, QtWidgets.QFormLayout.FieldRole, self.rebuildSpansU_spinBox)
+
+        self.rebuildSpansV_label = QtWidgets.QLabel(self.groupBox)
+        self.rebuildSpansV_spinBox = QtWidgets.QSpinBox(self.groupBox)
+        self.rebuildSpansV_spinBox.setMinimum(1)
+        self.rebuildSpansV_spinBox.setMaximum(64)
+        self.formLayout.setWidget(14, QtWidgets.QFormLayout.LabelRole, self.rebuildSpansV_label)
+        self.formLayout.setWidget(14, QtWidgets.QFormLayout.FieldRole, self.rebuildSpansV_spinBox)
+
         self.collision_label = QtWidgets.QLabel(self.groupBox)
         self.collision_doubleSpinBox = QtWidgets.QDoubleSpinBox(self.groupBox)
         self.collision_doubleSpinBox.setDecimals(3)
@@ -113,6 +130,9 @@ class Ui_Form(object):
         self.ctlSize_label.setText(gqt.fakeTranslate("Form", "Ctl Size", None, -1))
         self.addJoints_checkBox.setText(gqt.fakeTranslate("Form", "Add Joints", None, -1))
         self.postCollision_checkBox.setText(gqt.fakeTranslate("Form", "Post Collision (2nd pass)", None, -1))
+        self.wave_checkBox.setText(gqt.fakeTranslate("Form", "Wave (deterministic oscillator)", None, -1))
+        self.rebuildSpansU_label.setText(gqt.fakeTranslate("Form", "Surface Spans U (0=keep)", None, -1))
+        self.rebuildSpansV_label.setText(gqt.fakeTranslate("Form", "Surface Spans V", None, -1))
         self.collision_label.setText(gqt.fakeTranslate("Form", "Collision", None, -1))
         self.tightness_label.setText(gqt.fakeTranslate("Form", "Tightness", None, -1))
         self.falloff_label.setText(gqt.fakeTranslate("Form", "Falloff", None, -1))
