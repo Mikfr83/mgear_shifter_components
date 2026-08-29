@@ -7,7 +7,9 @@ import mgear.shifter.custom_step as cstp
 class CustomShifterStep(cstp.customShifterMainStep):
     """Connect riderConstraint global spread to its root global scale."""
 
-    def __init__(self) -> None:
+    # No annotations here: mgear 4.x runStep inspects __init__ with
+    # inspect.getargspec, which raises ValueError on annotated functions.
+    def __init__(self):
         self.name = "Connect riderConstraint to its root"
 
     def run(self, stepDict: dict[str, object]) -> None:

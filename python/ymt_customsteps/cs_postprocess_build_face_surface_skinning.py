@@ -12,11 +12,12 @@ import mgear.shifter.custom_step as cstp
 
 class CustomShifterStep(cstp.customShifterMainStep):
 
-    def __init__(self) -> None:
+    # No annotations here: mgear 4.x runStep inspects __init__ with
+    # inspect.getargspec, which raises ValueError on annotated functions.
+    def __init__(self):
         self.name = "Sknning Surface"
 
     def run(self, stepDict: dict[str, object]) -> None:
-        self.rig = stepDict["mgearRun"]
         self.deformers = [
             "headBend_C0_0_jnt",
             "headBend_C1_0_jnt",
@@ -25,7 +26,6 @@ class CustomShifterStep(cstp.customShifterMainStep):
             "headBend_C2_0_jnt",
             "headBend_C3_0_jnt",
             "mouth_C0_jaw_jnt",
-            "nose_C0_0_jnt",
             "forehead_C0_0_jnt",
             # "zygoma_L0_0_jnt",
             # "zygoma_R0_0_jnt",
@@ -35,7 +35,6 @@ class CustomShifterStep(cstp.customShifterMainStep):
 
     def find_surfaces(self) -> list[str]:
         # surfaces = []
-        print(self.rig)
 
         return cmds.ls("surface_C0_surface")
 

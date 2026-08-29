@@ -14,7 +14,9 @@ import ymt_shifter_utility as ymt_util
 class CustomShifterStep(cstp.customShifterMainStep):
     """Custom Shifter Step Class for connecting upper lip to headbend2."""
 
-    def __init__(self) -> None:
+    # No annotations here: mgear 4.x runStep inspects __init__ with
+    # inspect.getargspec, which raises ValueError on annotated functions.
+    def __init__(self):
         self.name = "Connect upper lip to headbend"
         self.defaultConfig = {
             "src": "headBend_C2_ctl",
@@ -24,7 +26,6 @@ class CustomShifterStep(cstp.customShifterMainStep):
         }
 
     def run(self, stepDict: dict[str, object]) -> None:
-        self.rig = stepDict["mgearRun"]
         self.config = stepDict.get("cs_connect_lip_to_headbend", self.defaultConfig)
 
         src = self.config.get("src")

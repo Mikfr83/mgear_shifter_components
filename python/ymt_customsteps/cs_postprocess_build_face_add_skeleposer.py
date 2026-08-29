@@ -20,7 +20,9 @@ import ymt_shifter_utility as ymt_util
 
 class CustomShifterStep(cstp.customShifterMainStep):
 
-    def __init__(self) -> None:
+    # No annotations here: mgear 4.x runStep inspects __init__ with
+    # inspect.getargspec, which raises ValueError on annotated functions.
+    def __init__(self):
         self.name = "Add Skeleposer"
 
     def run(self, stepDict: dict[str, object]) -> None:

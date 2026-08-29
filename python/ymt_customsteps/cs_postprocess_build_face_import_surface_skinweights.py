@@ -14,16 +14,18 @@ import mgear.shifter.custom_step as cstp
 
 class CustomShifterStep(cstp.customShifterMainStep):
 
-    def __init__(self) -> None:
+    # No annotations here: mgear 4.x runStep inspects __init__ with
+    # inspect.getargspec, which raises ValueError on annotated functions.
+    def __init__(self):
         self.name = "Sknning Surface"
 
     def run(self, stepDict: dict[str, object]) -> None:
-        self.rig = stepDict["mgearRun"]
+        self._rig = stepDict["mgearRun"]
         self.skin_file = self.get_skin_file()
         skin.importSkinPack(self.skin_file)
 
     def get_skin_file(self) -> str:
-        rig_name = self.rig.options["rig_name"]
+        rig_name = self._rig.options["rig_name"]
         file_name = f"{rig_name}_surface_C0_surface.gSkinPack"
         # file_name = f"face_surface_C0_surface.gSkinPack"
 

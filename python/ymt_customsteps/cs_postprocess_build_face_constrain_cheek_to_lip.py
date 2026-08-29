@@ -118,7 +118,9 @@ class CustomShifterStep(cstp.customShifterMainStep):
         ]
     """
 
-    def __init__(self) -> None:
+    # No annotations here: mgear 4.x runStep inspects __init__ with
+    # inspect.getargspec, which raises ValueError on annotated functions.
+    def __init__(self):
         self.name = "Sknning Surface"
         self.defaultConfig = [
             {
@@ -203,7 +205,6 @@ class CustomShifterStep(cstp.customShifterMainStep):
         ]
 
     def run(self, stepDict: dict[str, object]) -> None:
-        self.rig = stepDict["mgearRun"]
         self.config = stepDict.get("cs_connect_cheek_to_lip_config", self.defaultConfig)
 
         for entry in self.config:

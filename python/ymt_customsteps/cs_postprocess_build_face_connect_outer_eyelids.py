@@ -45,11 +45,12 @@ class CustomShifterStep(cstp.customShifterMainStep):
         }
     """
 
-    def __init__(self) -> None:
+    # No annotations here: mgear 4.x runStep inspects __init__ with
+    # inspect.getargspec, which raises ValueError on annotated functions.
+    def __init__(self):
         self.name = "Outer Eyelids Connect"
 
     def run(self, stepDict: dict[str, object]) -> None:
-        self.rig = stepDict["mgearRun"]
         self.stepDict = stepDict
         self.config = stepDict["cs_outer_eyelids_config"]
         self.parent = self.config["parent"]
