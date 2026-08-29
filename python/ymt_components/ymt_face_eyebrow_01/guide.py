@@ -99,7 +99,7 @@ class Guide(guide.ComponentGuide):
 
         self.save_transform = ["root", "sliding_surface", "#_loc", "uploc", "lowloc", "tan"]
         self.save_blade = ["blade"]
-        self.addMinMax("#_loc", 1, -1)
+        self.addMinMax("#_loc", 3, -1)
 
     def addObjects(self) -> None:
         """Add the Guide Root, blade and locators"""

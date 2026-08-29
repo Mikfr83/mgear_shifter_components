@@ -212,12 +212,17 @@ class Component(component.Main):
 
         t = getTransform(self.root)
         points = [x - self.root.getTranslation(space="world") for x in self.uplocsPos]
+        if len(points) < 3:
+            raise ValueError("ymt_face_eyebrow_01 requires at least three eyebrow locators.")
+
+        degree = min(3, len(points) - 1)
 
         name = "main_crv"
         crv = curve.addCurve(
             self.crv_root,
             self.getName(name),
             points,
+            degree=degree,
             m=t
         )
 
