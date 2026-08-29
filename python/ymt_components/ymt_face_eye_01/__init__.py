@@ -1,6 +1,7 @@
 """mGear shifter components"""
 from __future__ import annotations
 
+import math
 import re
 from typing import List, Optional, Tuple, TYPE_CHECKING, Union
 
@@ -368,7 +369,7 @@ class Component(component.Main):
     def addBlinkControllers(self, t: MatrixLike) -> None:
         blink_root = addTransform(self.over_ctl, self.getName("blink_root"), t)
 
-        inv = datatypes.EulerRotation(180.0, 0.0, 0.0)
+        inv = datatypes.EulerRotation(math.radians(180.0), 0.0, 0.0)
         upper_t = transform.setMatrixPosition(t, self.upPos)
         upper_t *= inv.asMatrix()
         upper_t = transform.setMatrixPosition(upper_t, self.upPos)
