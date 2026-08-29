@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 
 AUTHOR = "yamahigashi"
-VERSION = [1, 6, 0]
+VERSION = [2, 0, 0]
 TYPE = "ymt_skirt_01"
 NAME = "skirt"
 
@@ -104,16 +104,52 @@ def _matrix_from_axes(x_axis: Vector3, y_axis: Vector3, z_axis: Vector3, positio
     )
 
 
-def _clamp(value: float, minimum: float, maximum: float) -> float:
-    return max(minimum, min(maximum, value))
-
-
 def _ring_stations(d_knee: float, d_heel: float, hem_projection: float) -> tuple[float, float | None]:
     knee_station = min(d_knee, hem_projection)
     ankle_station = min(d_heel, hem_projection)
     if ankle_station - knee_station < 0.05 * hem_projection:
         return ankle_station, None
     return knee_station, ankle_station
+
+
+def _ring_positions_error(raw: str, token_index: int, raw_token: str, reason: str) -> RuntimeError:
+    return RuntimeError(
+        "ymt_skirt_01 ringPositions %r is invalid at token %s %r: %s."
+        % (raw, token_index, raw_token, reason)
+    )
+
+
+def _parse_ring_position_token(raw: str, token_index: int, raw_token: str, previous: float | None) -> float:
+    if not raw_token.strip():
+        raise _ring_positions_error(raw, token_index, raw_token, "the token is empty")
+    try:
+        value = float(raw_token)
+    except ValueError as exc:
+        raise _ring_positions_error(raw, token_index, raw_token, "expected a number") from exc
+    if not math.isfinite(value):
+        raise _ring_positions_error(raw, token_index, raw_token, "the value must be finite")
+    if value <= 0.0 or value > 1.0:
+        raise _ring_positions_error(raw, token_index, raw_token, "values must satisfy 0 < t <= 1")
+    if token_index == 1 and value < 1.0e-3:
+        raise _ring_positions_error(raw, token_index, raw_token, "the leading separation must be >= 1e-3")
+    if previous is not None and value <= previous:
+        raise _ring_positions_error(raw, token_index, raw_token, "values must be strictly increasing")
+    if previous is not None and value - previous < 1.0e-3:
+        raise _ring_positions_error(raw, token_index, raw_token, "adjacent separation must be >= 1e-3")
+    return value
+
+
+def _parse_normalized_ring_positions(raw: str) -> tuple[list[float], list[str]]:
+    raw_tokens = raw.strip().split(",")
+    if len(raw_tokens) > 32:
+        raise _ring_positions_error(raw, 33, raw_tokens[32], "at most 32 stations are allowed")
+    positions = []
+    previous = None
+    for token_index, raw_token in enumerate(raw_tokens, start=1):
+        value = _parse_ring_position_token(raw, token_index, raw_token, previous)
+        positions.append(value)
+        previous = value
+    return positions, raw_tokens
 
 
 def _station_radius(station: float, projections: Sequence[float], radii: Sequence[float]) -> float:
@@ -130,19 +166,26 @@ def _station_radius(station: float, projections: Sequence[float], radii: Sequenc
 
 def _ring_skin_weights(
     axial_projection: float,
-    knee_station: float,
-    ankle_station: float | None,
-) -> tuple[float, float, float]:
-    if ankle_station is None:
-        knee_weight = _clamp(axial_projection / knee_station, 0.0, 1.0)
-        return 1.0 - knee_weight, knee_weight, 0.0
-    ankle_weight = (
-        0.0
-        if axial_projection <= knee_station
-        else _clamp((axial_projection - knee_station) / (ankle_station - knee_station), 0.0, 1.0)
-    )
-    knee_weight = _clamp(axial_projection / knee_station, 0.0, 1.0) * (1.0 - ankle_weight)
-    return 1.0 - knee_weight - ankle_weight, knee_weight, ankle_weight
+    stations: Sequence[float],
+) -> list[float]:
+    if not stations:
+        raise ValueError("ring skin weights require at least one station")
+    weights = [0.0] * (len(stations) + 1)
+    if axial_projection <= 0.0:
+        weights[0] = 1.0
+        return weights
+    if axial_projection >= stations[-1]:
+        weights[-1] = 1.0
+        return weights
+    lower_station = 0.0
+    for upper_index, upper_station in enumerate(stations, start=1):
+        if axial_projection <= upper_station:
+            ratio = (axial_projection - lower_station) / (upper_station - lower_station)
+            weights[upper_index - 1] = 1.0 - ratio
+            weights[upper_index] = ratio
+            return weights
+        lower_station = upper_station
+    raise RuntimeError("ring skin weight interval resolution failed")
 
 
 class Component(component.Main):
@@ -209,9 +252,15 @@ class Component(component.Main):
             "tightness", "Tightness (Long Only)", "double", float(self.settings["tightness"]), 0.0, 1.0
         )
         self.falloff_att = self.addAnimParam("falloff", "Falloff", "double", float(self.settings["falloff"]), -1.0, 1.0)
+        self.smoothness_att = self.addAnimParam(
+            "smoothness", "Smoothness", "double", float(self.settings["smoothness"]), 0.0, 1.0
+        )
+        self.follow_att = self.addAnimParam("follow", "Follow", "double", float(self.settings["follow"]), 0.0, 1.0)
         cmds.connectAttr(str(self.collision_att), self.collider_node + ".collision", force=True)
         cmds.connectAttr(str(self.tightness_att), self.collider_node + ".tightness", force=True)
         cmds.connectAttr(str(self.falloff_att), self.collider_node + ".falloff", force=True)
+        cmds.connectAttr(str(self.smoothness_att), self.collider_node + ".smoothness", force=True)
+        cmds.connectAttr(str(self.follow_att), self.collider_node + ".follow", force=True)
         if self.post_collision:
             self.post_collision_att = self.addAnimParam("postCollision", "Post Collision", "double", 1.0, 0.0, 2.0)
             self.post_falloff_att = self.addAnimParam("postFalloff", "Post Falloff", "double", 0.2, 0.0, 1.0)
@@ -264,13 +313,11 @@ class Component(component.Main):
         self.relatives["root"] = self.fk_ctls[0]
         self.controlRelatives["root"] = self.fk_ctls[0]
         self.aliasRelatives["root"] = "skirtRoot"
-        self.relatives["ringKnee"] = self.ring_knee_ctl
-        self.controlRelatives["ringKnee"] = self.ring_knee_ctl
-        self.aliasRelatives["ringKnee"] = "ringKnee"
-        if self.ring_ankle_ctl is not None:
-            self.relatives["ringAnkle"] = self.ring_ankle_ctl
-            self.controlRelatives["ringAnkle"] = self.ring_ankle_ctl
-            self.aliasRelatives["ringAnkle"] = "ringAnkle"
+        for index, ctl in enumerate(self.ring_ctls):
+            relative_name = "ring%s" % index
+            self.relatives[relative_name] = ctl
+            self.controlRelatives[relative_name] = ctl
+            self.aliasRelatives[relative_name] = relative_name
         for (row, col), ctl in self.fk_ctls_by_cell.items():
             local_name = "skirt_%s_%s_loc" % (row, col)
             self.relatives[local_name] = ctl
@@ -568,6 +615,29 @@ class Component(component.Main):
         self._validated_range_setting("collision", 0.0, 1.0)
         self._validated_range_setting("tightness", 0.0, 1.0)
         self._validated_range_setting("falloff", -1.0, 1.0)
+        self._validated_range_setting("smoothness", 0.0, 1.0)
+        self._validated_range_setting("follow", 0.0, 1.0)
+
+    def _validated_ring_stations(self) -> list[float]:
+        if "ringPositions" not in self.settings:
+            raise RuntimeError("ymt_skirt_01 requires the ringPositions setting.")
+        raw_value = self.settings["ringPositions"]
+        if not isinstance(raw_value, str):
+            raise RuntimeError(
+                "ymt_skirt_01 ringPositions must be a string; raw=%r, token 1=%r." % (raw_value, raw_value)
+            )
+        raw = raw_value
+        normalized = raw.strip()
+        hem_projection = self.row_axial_projections[-1]
+        if normalized == "auto":
+            knee_station, ankle_station = _ring_stations(self.d_knee, self.d_heel, hem_projection)
+            self.ring_position_tokens = ["auto"]
+            if ankle_station is not None:
+                self.ring_position_tokens.append("auto")
+                return [knee_station, ankle_station]
+            return [knee_station]
+        normalized_positions, self.ring_position_tokens = _parse_normalized_ring_positions(raw)
+        return [value * hem_projection for value in normalized_positions]
 
     def _validated_bool_setting(self, name: str) -> bool:
         if name not in self.settings:
@@ -615,11 +685,22 @@ class Component(component.Main):
             "heel_R": "heelRef_R",
         }
         refs: dict[str, PymelNode] = {}
+        parents = {
+            "waist": None,
+            "hip_L": "waist",
+            "knee_L": "hip_L",
+            "heel_L": "knee_L",
+            "hip_R": "waist",
+            "knee_R": "hip_R",
+            "heel_R": "knee_R",
+        }
         for name in FIXED_REFERENCE_NAMES:
+            parent_name = parents[name]
+            parent = self.refs_group if parent_name is None else refs[parent_name]
             node = cmds.createNode(
                 "transform",
                 name=self.getName(rig_names[name]),
-                parent=self._node_name(self.refs_group),
+                parent=self._node_name(parent),
             )
             cmds.xform(node, worldSpace=True, matrix=matrices[name])
             for channel in ("tx", "ty", "tz", "rx", "ry", "rz"):
@@ -628,8 +709,7 @@ class Component(component.Main):
         return refs
 
     def _create_ring_controllers(self) -> None:
-        hem_projection = self.row_axial_projections[-1]
-        self.knee_station, self.ankle_station = _ring_stations(self.d_knee, self.d_heel, hem_projection)
+        self.ring_stations = self._validated_ring_stations()
         group_name = cmds.createNode(
             "transform",
             name=self.getName("ringCtls"),
@@ -639,12 +719,10 @@ class Component(component.Main):
         self.ring_ctls_group = pm.PyNode(group_name)
         self.ring_ctls: list[PymelNode] = []
         self.ring_constraint_nodes: list[tuple[PymelNode, str]] = []
-        self.ring_anchor_names: dict[str, str] = {}
+        self.ring_anchor_names: list[str] = []
 
-        self.ring_knee_ctl = self._create_ring_controller("ringKnee", self.knee_station)
-        self.ring_ankle_ctl: PymelNode | None = None
-        if self.ankle_station is not None:
-            self.ring_ankle_ctl = self._create_ring_controller("ringAnkle", self.ankle_station)
+        for index, station in enumerate(self.ring_stations):
+            self._create_ring_controller("ring%s" % index, station)
         self._create_ring_influence_joints()
 
     def _create_ring_controller(
@@ -687,7 +765,7 @@ class Component(component.Main):
 
         self.ring_ctls.append(ctl)
         self.ring_constraint_nodes.append((ctl, anchor_name))
-        self.ring_anchor_names[stem] = anchor_name
+        self.ring_anchor_names.append(anchor_name)
         return ctl
 
     def _connect_anchor_surface_follow(self, stem: str, anchor_name: str, station: float) -> None:
@@ -698,15 +776,16 @@ class Component(component.Main):
         maximum_v = float(cmds.getAttr(self.collider_surface_shape + ".maxValueV"))
         minimum_u = float(cmds.getAttr(self.collider_surface_shape + ".minValueU"))
         maximum_u = float(cmds.getAttr(self.collider_surface_shape + ".maxValueU"))
+        if not math.isfinite(minimum_u) or not math.isfinite(maximum_u) or maximum_u <= minimum_u:
+            raise RuntimeError("ymt_skirt_01 rebuilt surface has an invalid U range.")
         hem_projection = self.row_axial_projections[-1]
         v_value = minimum_v + ((station / hem_projection) * (maximum_v - minimum_v))
 
-        sample_count = 8
+        u_values = self._ring_u_parameters(stem, v_value, minimum_u, maximum_u)
         average = cmds.createNode("plusMinusAverage", name=self.getName(stem + "_center_avg"))
         cmds.setAttr(average + ".operation", 3)
         sample_positions = []
-        for index in range(sample_count):
-            u_value = minimum_u + ((index / float(sample_count)) * (maximum_u - minimum_u))
+        for index, u_value in enumerate(u_values):
             posi = cmds.createNode("pointOnSurfaceInfo", name=self.getName("%s_center%s_posi" % (stem, index)))
             cmds.connectAttr(
                 self.surface_rebuild_node + ".outputSurface",
@@ -761,6 +840,78 @@ class Component(component.Main):
         cmds.connectAttr(local_multiply + ".matrixSum", decompose + ".inputMatrix", force=True)
         cmds.connectAttr(decompose + ".outputTranslate", anchor_name + ".translate", force=True)
         cmds.connectAttr(decompose + ".outputRotate", anchor_name + ".rotate", force=True)
+        self._connect_anchor_scale(stem, anchor_name, sample_positions)
+
+    def _ring_u_parameters(self, stem: str, v_value: float, minimum_u: float, maximum_u: float) -> list[float]:
+        sample_count = 256
+        sampler = cmds.createNode("pointOnSurfaceInfo", name=self.getName(stem + "_calibration_posi"))
+        try:
+            cmds.connectAttr(self.surface_rebuild_node + ".outputSurface", sampler + ".inputSurface", force=True)
+            sampled = []
+            for index in range(sample_count):
+                u_value = minimum_u + ((index / float(sample_count)) * (maximum_u - minimum_u))
+                angle = self._surface_angle(self._surface_point(sampler, u_value, v_value))
+                sampled.append((u_value, angle))
+        finally:
+            if cmds.objExists(sampler):
+                cmds.delete(sampler)
+
+        selected_indices = []
+        for target_index in range(8):
+            target_angle = target_index * math.pi / 4.0
+            best_index = 0
+            best_difference = abs(self._wrap_angle(sampled[0][1] - target_angle))
+            for scan_index, (_u_value, angle) in enumerate(sampled[1:], start=1):
+                difference = abs(self._wrap_angle(angle - target_angle))
+                if difference < best_difference:
+                    best_index = scan_index
+                    best_difference = difference
+            selected_indices.append(best_index)
+        if len(set(selected_indices)) != 8:
+            raise RuntimeError("ymt_skirt_01 %s ring calibration did not select eight distinct U values." % stem)
+        return [sampled[index][0] for index in selected_indices]
+
+    def _connect_anchor_scale(self, stem: str, anchor_name: str, sample_positions: Sequence[str]) -> None:
+        local_positions: dict[int, str] = {}
+        for sample_index in (0, 4, 2, 6):
+            transform_node = cmds.createNode(
+                "vectorProduct",
+                name=self.getName("%s_s%sLocal_pmm" % (stem, sample_index)),
+            )
+            cmds.setAttr(transform_node + ".operation", 4)
+            cmds.connectAttr(sample_positions[sample_index], transform_node + ".input1", force=True)
+            cmds.connectAttr(anchor_name + ".parentInverseMatrix[0]", transform_node + ".matrix", force=True)
+            local_positions[sample_index] = transform_node + ".output"
+
+        front_distance = cmds.createNode("distanceBetween", name=self.getName(stem + "_lenFront_db"))
+        cmds.connectAttr(local_positions[0], front_distance + ".point1", force=True)
+        cmds.connectAttr(local_positions[4], front_distance + ".point2", force=True)
+        side_distance = cmds.createNode("distanceBetween", name=self.getName(stem + "_lenSide_db"))
+        cmds.connectAttr(local_positions[2], side_distance + ".point1", force=True)
+        cmds.connectAttr(local_positions[6], side_distance + ".point2", force=True)
+
+        rest_front = float(cmds.getAttr(front_distance + ".distance"))
+        rest_side = float(cmds.getAttr(side_distance + ".distance"))
+        threshold = 1.0e-5 * self.guide_size
+        if not math.isfinite(rest_front) or rest_front < threshold:
+            raise RuntimeError("ymt_skirt_01 %s front ring diameter is shorter than 1e-5 times guide size." % stem)
+        if not math.isfinite(rest_side) or rest_side < threshold:
+            raise RuntimeError("ymt_skirt_01 %s side ring diameter is shorter than 1e-5 times guide size." % stem)
+
+        ratio = cmds.createNode("multiplyDivide", name=self.getName(stem + "_ratio_md"))
+        cmds.setAttr(ratio + ".operation", 2)
+        cmds.connectAttr(front_distance + ".distance", ratio + ".input1X", force=True)
+        cmds.connectAttr(side_distance + ".distance", ratio + ".input1Z", force=True)
+        cmds.setAttr(ratio + ".input2X", rest_front)
+        cmds.setAttr(ratio + ".input2Z", rest_side)
+        scale_max = cmds.createNode("condition", name=self.getName(stem + "_scaleMax_cnd"))
+        cmds.setAttr(scale_max + ".operation", 2)
+        cmds.connectAttr(ratio + ".outputX", scale_max + ".firstTerm", force=True)
+        cmds.connectAttr(ratio + ".outputZ", scale_max + ".secondTerm", force=True)
+        cmds.connectAttr(ratio + ".outputX", scale_max + ".colorIfTrueR", force=True)
+        cmds.connectAttr(ratio + ".outputZ", scale_max + ".colorIfFalseR", force=True)
+        for axis in "XYZ":
+            cmds.connectAttr(scale_max + ".outColorR", anchor_name + ".scale" + axis, force=True)
 
     def _create_vector_difference(self, name: str, first_plug: str, second_plug: str) -> str:
         node = cmds.createNode("plusMinusAverage", name=self.getName(name + "_pma"))
@@ -812,9 +963,8 @@ class Component(component.Main):
         cmds.setAttr(waist_joint + ".visibility", False)
         self.ring_skin_joints = [waist_joint]
         self.ring_skin_anchors = [waist_anchor]
-        for stem, ctl in (("ringKnee", self.ring_knee_ctl), ("ringAnkle", self.ring_ankle_ctl)):
-            if ctl is None:
-                continue
+        for index, (ctl, anchor_name) in enumerate(zip(self.ring_ctls, self.ring_anchor_names)):
+            stem = "ring%s" % index
             joint = cmds.createNode("joint", name=self.getName(stem + "_jnt"), parent=self._node_name(ctl))
             self._set_identity_transform(joint)
             cmds.setAttr(joint + ".jointOrient", 0.0, 0.0, 0.0, type="double3")
@@ -822,7 +972,7 @@ class Component(component.Main):
             cmds.setAttr(joint + ".drawStyle", 2)
             cmds.setAttr(joint + ".visibility", False)
             self.ring_skin_joints.append(joint)
-            self.ring_skin_anchors.append(self.ring_anchor_names[stem])
+            self.ring_skin_anchors.append(anchor_name)
 
     def _assert_ring_control_identity(self) -> None:
         identity = self._identity_matrix()
@@ -850,6 +1000,19 @@ class Component(component.Main):
 
     def _create_collider_node(self) -> str:
         node = cmds.createNode("skirtBellCollider", name=self.getName("skirtBellCollider"))
+        missing_attributes = [
+            name for name in ("smoothness", "follow") if not cmds.attributeQuery(name, node=node, exists=True)
+        ]
+        if missing_attributes:
+            maya_version = cmds.about(version=True)
+            # The locator is still an unparented world-level transform here; later
+            # validators fail inside the component hierarchy, this one must clean up.
+            stale_parents = cmds.listRelatives(node, parent=True, fullPath=True) or []
+            cmds.delete(stale_parents[0] if stale_parents else node)
+            raise RuntimeError(
+                "ymt_skirt_01 colliders plugin for Maya %s is missing skirtBellCollider attributes %s;"
+                " rebuild the colliders plugin." % (maya_version, ", ".join(missing_attributes))
+            )
         parents = cmds.listRelatives(node, parent=True, type="transform", fullPath=True) or []
         if len(parents) != 1:
             raise RuntimeError("ymt_skirt_01 could not resolve the skirtBellCollider transform.")
@@ -890,6 +1053,8 @@ class Component(component.Main):
         cmds.setAttr(self.collider_node + ".collision", float(self.settings["collision"]))
         cmds.setAttr(self.collider_node + ".tightness", float(self.settings["tightness"]))
         cmds.setAttr(self.collider_node + ".falloff", float(self.settings["falloff"]))
+        cmds.setAttr(self.collider_node + ".smoothness", float(self.settings["smoothness"]))
+        cmds.setAttr(self.collider_node + ".follow", float(self.settings["follow"]))
         self._configure_global_scale()
         self._rewrite_bell_scale_ramp()
 
@@ -980,6 +1145,7 @@ class Component(component.Main):
         cmds.connectAttr(self.collider_node + ".outputSurface", rebuild + ".inputSurface", force=True)
         cmds.connectAttr(rebuild + ".outputSurface", shape + ".create", force=True)
         self.surface_rebuild_node = rebuild
+        self.rebuild_spans_v = spans_v
         return pm.PyNode(surface), shape
 
     def _surface_u_parameters(self) -> list[float]:
@@ -1060,28 +1226,46 @@ class Component(component.Main):
             minimum + ((projection / hem_projection) * (maximum - minimum)) for projection in self.row_axial_projections
         ]
 
+    def _ring_weights_for_cv(self, cv: str, influence_count: int) -> list[float]:
+        values = cmds.pointPosition(cv, world=True)
+        position = (float(values[0]), float(values[1]), float(values[2]))
+        if not all(math.isfinite(value) for value in position):
+            raise RuntimeError("ymt_skirt_01 rebuilt collider surface has a non-finite CV position.")
+        axial_projection = _dot(_subtract(position, self.reference_positions["waist"]), self.axis)
+        if not math.isfinite(axial_projection):
+            raise RuntimeError("ymt_skirt_01 rebuilt collider surface has a non-finite CV projection.")
+        weights = _ring_skin_weights(axial_projection, self.ring_stations)
+        if not all(math.isfinite(weight) for weight in weights):
+            raise RuntimeError("ymt_skirt_01 rebuilt collider surface produced non-finite ring weights.")
+        if len(weights) != influence_count:
+            raise RuntimeError("ymt_skirt_01 ring weight count does not match skin influences.")
+        if abs(sum(weights) - 1.0) > 1.0e-6:
+            raise RuntimeError("ymt_skirt_01 rebuilt collider surface ring weights do not sum to one.")
+        return weights
+
+    def _validate_live_ring_weights(self, maximum_ring_weights: Sequence[float]) -> None:
+        for ring_index, maximum_weight in enumerate(maximum_ring_weights):
+            if maximum_weight <= 1.0e-6:
+                raise RuntimeError(
+                    "ymt_skirt_01 ring %s is dead for ringPositions token %r at rebuildSpansV=%s;"
+                    " raise rebuildSpansV or widen/move stations so a CV row falls inside"
+                    " (t_{i-1}, t_{i+1})."
+                    % (ring_index, self.ring_position_tokens[ring_index], self.rebuild_spans_v)
+                )
+
     def _skin_rebuilt_surface(self) -> None:
         cvs = cmds.ls(self.collider_surface_shape + ".cv[*][*]", flatten=True) or []
         if not cvs:
             raise RuntimeError("ymt_skirt_01 rebuilt collider surface has no CVs.")
         influences = list(self.ring_skin_joints)
-        waist = self.reference_positions["waist"]
         weighted_cvs = []
+        maximum_ring_weights = [0.0] * len(self.ring_stations)
         for cv in cvs:
-            values = cmds.pointPosition(cv, world=True)
-            position = (float(values[0]), float(values[1]), float(values[2]))
-            if not all(math.isfinite(value) for value in position):
-                raise RuntimeError("ymt_skirt_01 rebuilt collider surface has a non-finite CV position.")
-            axial_projection = _dot(_subtract(position, waist), self.axis)
-            if not math.isfinite(axial_projection):
-                raise RuntimeError("ymt_skirt_01 rebuilt collider surface has a non-finite CV projection.")
-            weights = _ring_skin_weights(axial_projection, self.knee_station, self.ankle_station)
-            if not all(math.isfinite(weight) for weight in weights):
-                raise RuntimeError("ymt_skirt_01 rebuilt collider surface produced non-finite ring weights.")
-            baked_weights = weights[: len(influences)]
-            if len(baked_weights) != len(influences):
-                raise RuntimeError("ymt_skirt_01 ring weight count does not match skin influences.")
-            weighted_cvs.append((cv, baked_weights))
+            weights = self._ring_weights_for_cv(cv, len(influences))
+            for ring_index, weight in enumerate(weights[1:]):
+                maximum_ring_weights[ring_index] = max(maximum_ring_weights[ring_index], weight)
+            weighted_cvs.append((cv, weights))
+        self._validate_live_ring_weights(maximum_ring_weights)
         skin_cluster = cmds.skinCluster(
             *influences,
             self.collider_surface_shape,
@@ -1194,10 +1378,26 @@ class Component(component.Main):
             )
 
     def _create_surface_drivers_and_controls(self) -> None:
+        group_name = cmds.createNode(
+            "transform",
+            name=self.getName("skirtCtls_grp"),
+            parent=self._node_name(self.root),
+        )
+        self._set_identity_transform(group_name)
+        self.skirt_ctls_group = pm.PyNode(group_name)
+        self.skirt_row_groups: list[PymelNode] = []
         for row in range(self.rows):
+            row_group_name = cmds.createNode(
+                "transform",
+                name=self.getName("skirtRow%s_grp" % row),
+                parent=self._node_name(self.skirt_ctls_group),
+            )
+            self._set_identity_transform(row_group_name)
+            row_group = pm.PyNode(row_group_name)
+            self.skirt_row_groups.append(row_group)
             for col in range(self.cols):
                 cell = (row, col)
-                npo = self._create_cell_driver(cell, self.grid_positions[cell])
+                npo = self._create_cell_driver(cell, self.grid_positions[cell], row_group)
                 npo_matrix = datatypes.Matrix(
                     cmds.xform(self._node_name(npo), query=True, worldSpace=True, matrix=True)
                 )
@@ -1247,7 +1447,12 @@ class Component(component.Main):
         x_axis = _cross(y_axis, z_axis)
         return _matrix_from_axes(x_axis, y_axis, z_axis, locator_position)
 
-    def _create_cell_driver(self, cell: tuple[int, int], locator_position: Vector3) -> PymelNode:
+    def _create_cell_driver(
+        self,
+        cell: tuple[int, int],
+        locator_position: Vector3,
+        parent: PymelNode,
+    ) -> PymelNode:
         row, col = cell
         stem = "skirt_%s_%s" % cell
         posi = cmds.createNode("pointOnSurfaceInfo", name=self.getName(stem + "_posi"))
@@ -1273,7 +1478,7 @@ class Component(component.Main):
         # where M0 carries the orthonormalized surface frame at the authored position.
         offset_matrix = rest_matrix * driver_matrix.inverse()
 
-        npo_name = cmds.createNode("transform", name=self.getName(stem + "_npo"), parent=self._node_name(self.root))
+        npo_name = cmds.createNode("transform", name=self.getName(stem + "_npo"), parent=self._node_name(parent))
         cmds.xform(npo_name, worldSpace=True, matrix=rest_values)
         multiply = cmds.createNode("multMatrix", name=self.getName(stem + "_mm"))
         cmds.setAttr(multiply + ".matrixIn[0]", *self._openmaya_matrix_values(offset_matrix), type="matrix")

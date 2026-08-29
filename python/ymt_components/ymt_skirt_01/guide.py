@@ -37,7 +37,7 @@ QtWidgets = qt.QtWidgets
 AUTHOR = "yamahigashi"
 URL = "yamahigashi.dev"
 EMAIL = "yamahigashi@gmail.com"
-VERSION = [1, 6, 0]
+VERSION = [2, 0, 0]
 TYPE = "ymt_skirt_01"
 NAME = "skirt"
 DESCRIPTION = "Collider-driven FK skirt grid."
@@ -103,6 +103,9 @@ class Guide(guide.ComponentGuide):
         self.pCollision = self.addParam("collision", "double", 0.2, 0.0, 1.0)
         self.pTightness = self.addParam("tightness", "double", 0.5, 0.0, 1.0)
         self.pFalloff = self.addParam("falloff", "double", -1.0, -1.0, 1.0)
+        self.pSmoothness = self.addParam("smoothness", "double", 0.0, 0.0, 1.0)
+        self.pFollow = self.addParam("follow", "double", 0.0, 0.0, 1.0)
+        self.pRingPositions = self.addParam("ringPositions", "string", "auto")
         self.pRingScaleX = self.addParam("ringScaleX", "double", 1.0, 0.001, None)
         self.pRingScaleY = self.addParam("ringScaleY", "double", 1.0, 0.001, None)
         self.pRingScaleZ = self.addParam("ringScaleZ", "double", 1.0, 0.001, None)
@@ -193,7 +196,7 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
         self.setObjectName(self.toolName)
         self.setWindowFlags(QtCore.Qt.Window)
         self.setWindowTitle(TYPE)
-        self.resize(320, 430)
+        self.resize(320, 520)
 
     def create_componentControls(self) -> None:
         return
@@ -211,6 +214,9 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
         self.settingsTab.collision_doubleSpinBox.setValue(self.root.attr("collision").get())
         self.settingsTab.tightness_doubleSpinBox.setValue(self.root.attr("tightness").get())
         self.settingsTab.falloff_doubleSpinBox.setValue(self.root.attr("falloff").get())
+        self.settingsTab.smoothness_doubleSpinBox.setValue(self.root.attr("smoothness").get())
+        self.settingsTab.follow_doubleSpinBox.setValue(self.root.attr("follow").get())
+        self.settingsTab.ringPositions_lineEdit.setText(self.root.attr("ringPositions").get())
         self.settingsTab.ringScaleX_doubleSpinBox.setValue(self.root.attr("ringScaleX").get())
         self.settingsTab.ringScaleY_doubleSpinBox.setValue(self.root.attr("ringScaleY").get())
         self.settingsTab.ringScaleZ_doubleSpinBox.setValue(self.root.attr("ringScaleZ").get())
@@ -267,6 +273,13 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
         self.settingsTab.falloff_doubleSpinBox.valueChanged.connect(
             partial(self.updateSpinBox, self.settingsTab.falloff_doubleSpinBox, "falloff")
         )
+        self.settingsTab.smoothness_doubleSpinBox.valueChanged.connect(
+            partial(self.updateSpinBox, self.settingsTab.smoothness_doubleSpinBox, "smoothness")
+        )
+        self.settingsTab.follow_doubleSpinBox.valueChanged.connect(
+            partial(self.updateSpinBox, self.settingsTab.follow_doubleSpinBox, "follow")
+        )
+        self.settingsTab.ringPositions_lineEdit.editingFinished.connect(self._update_ring_positions)
         self.settingsTab.ringScaleX_doubleSpinBox.valueChanged.connect(
             partial(self._update_ring_scale, self.settingsTab.ringScaleX_doubleSpinBox, "ringScaleX")
         )
@@ -287,6 +300,9 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
     def _update_ring_scale(self, spin_box: QtWidgets.QDoubleSpinBox, attr_name: str, *_args: float) -> None:
         self.updateSpinBox(spin_box, attr_name)
         self.update_ring_preview()
+
+    def _update_ring_positions(self) -> None:
+        self.root.attr("ringPositions").set(self.settingsTab.ringPositions_lineEdit.text())
 
     def update_ring_preview(self) -> None:
         """Redraw guide-side ellipse curves visualizing the leg collision ring size."""

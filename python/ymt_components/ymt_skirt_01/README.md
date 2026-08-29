@@ -2,7 +2,28 @@
 
 Collider-driven skirt component wrapping `skirtBellCollider`. Contracts
 live in `adr/` (0001 base, 0002 ring controllers, 0003 two-pass
-collision, 0004 wave oscillator).
+collision, 0004 wave oscillator, 0005 ring generalization and rig
+ergonomics).
+
+## Ring controls and collider channels
+
+`ringPositions` defaults to `auto`, which places the legacy knee/ankle
+stations (two rings), collapsing to a single ring only when the two
+stations sit within 5% of the hem projection of each other. To author stations
+explicitly, enter a strictly increasing comma-separated list of normalized
+hem fractions, for example `0.3, 0.6, 0.9`. Values must satisfy
+`0 < t <= 1`, the first and adjacent separations must be at least `0.001`,
+and no more than 32 entries are accepted.
+
+Ring relatives are named `ring0` through `ring{N-1}`, ordered waist to hem.
+The former `ringKnee` and `ringAnkle` relatives are not exposed.
+
+The ui host exposes `smoothness` and `follow` channels in the 0..1 range;
+both default to 0 and drive the matching `skirtBellCollider` attributes.
+
+Usable ring count is bounded by `rebuildSpansV`: the default four cubic
+spans produce seven V CV rows, and the build fails closed if any ring has
+no weighted CV row (raise the V spans or widen/move the stations).
 
 ## Wave layer (guide toggle `wave`, default off)
 

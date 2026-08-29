@@ -16,9 +16,17 @@ class Ui_Form(object):
         spin_box.setSingleStep(0.05)
         return spin_box
 
+    def _unit_spin_box(self) -> QtWidgets.QDoubleSpinBox:
+        spin_box = QtWidgets.QDoubleSpinBox(self.groupBox)
+        spin_box.setDecimals(2)
+        spin_box.setMinimum(0.0)
+        spin_box.setMaximum(1.0)
+        spin_box.setSingleStep(0.05)
+        return spin_box
+
     def setupUi(self, Form: QtWidgets.QWidget) -> None:
         Form.setObjectName("Form")
-        Form.resize(300, 380)
+        Form.resize(300, 470)
         self.gridLayout = QtWidgets.QGridLayout(Form)
         self.groupBox = QtWidgets.QGroupBox(Form)
         self.mainLayout = QtWidgets.QVBoxLayout(self.groupBox)
@@ -55,24 +63,24 @@ class Ui_Form(object):
         self.formLayout.setWidget(4, QtWidgets.QFormLayout.FieldRole, self.addJoints_checkBox)
 
         self.postCollision_checkBox = QtWidgets.QCheckBox(self.groupBox)
-        self.formLayout.setWidget(11, QtWidgets.QFormLayout.FieldRole, self.postCollision_checkBox)
+        self.formLayout.setWidget(14, QtWidgets.QFormLayout.FieldRole, self.postCollision_checkBox)
 
         self.wave_checkBox = QtWidgets.QCheckBox(self.groupBox)
-        self.formLayout.setWidget(12, QtWidgets.QFormLayout.FieldRole, self.wave_checkBox)
+        self.formLayout.setWidget(15, QtWidgets.QFormLayout.FieldRole, self.wave_checkBox)
 
         self.rebuildSpansU_label = QtWidgets.QLabel(self.groupBox)
         self.rebuildSpansU_spinBox = QtWidgets.QSpinBox(self.groupBox)
         self.rebuildSpansU_spinBox.setMinimum(0)
         self.rebuildSpansU_spinBox.setMaximum(64)
-        self.formLayout.setWidget(13, QtWidgets.QFormLayout.LabelRole, self.rebuildSpansU_label)
-        self.formLayout.setWidget(13, QtWidgets.QFormLayout.FieldRole, self.rebuildSpansU_spinBox)
+        self.formLayout.setWidget(16, QtWidgets.QFormLayout.LabelRole, self.rebuildSpansU_label)
+        self.formLayout.setWidget(16, QtWidgets.QFormLayout.FieldRole, self.rebuildSpansU_spinBox)
 
         self.rebuildSpansV_label = QtWidgets.QLabel(self.groupBox)
         self.rebuildSpansV_spinBox = QtWidgets.QSpinBox(self.groupBox)
         self.rebuildSpansV_spinBox.setMinimum(1)
         self.rebuildSpansV_spinBox.setMaximum(64)
-        self.formLayout.setWidget(14, QtWidgets.QFormLayout.LabelRole, self.rebuildSpansV_label)
-        self.formLayout.setWidget(14, QtWidgets.QFormLayout.FieldRole, self.rebuildSpansV_spinBox)
+        self.formLayout.setWidget(17, QtWidgets.QFormLayout.LabelRole, self.rebuildSpansV_label)
+        self.formLayout.setWidget(17, QtWidgets.QFormLayout.FieldRole, self.rebuildSpansV_spinBox)
 
         self.collision_label = QtWidgets.QLabel(self.groupBox)
         self.collision_doubleSpinBox = QtWidgets.QDoubleSpinBox(self.groupBox)
@@ -101,20 +109,35 @@ class Ui_Form(object):
         self.formLayout.setWidget(7, QtWidgets.QFormLayout.LabelRole, self.falloff_label)
         self.formLayout.setWidget(7, QtWidgets.QFormLayout.FieldRole, self.falloff_doubleSpinBox)
 
+        self.smoothness_label = QtWidgets.QLabel(self.groupBox)
+        self.smoothness_doubleSpinBox = self._unit_spin_box()
+        self.formLayout.setWidget(8, QtWidgets.QFormLayout.LabelRole, self.smoothness_label)
+        self.formLayout.setWidget(8, QtWidgets.QFormLayout.FieldRole, self.smoothness_doubleSpinBox)
+
+        self.follow_label = QtWidgets.QLabel(self.groupBox)
+        self.follow_doubleSpinBox = self._unit_spin_box()
+        self.formLayout.setWidget(9, QtWidgets.QFormLayout.LabelRole, self.follow_label)
+        self.formLayout.setWidget(9, QtWidgets.QFormLayout.FieldRole, self.follow_doubleSpinBox)
+
+        self.ringPositions_label = QtWidgets.QLabel(self.groupBox)
+        self.ringPositions_lineEdit = QtWidgets.QLineEdit(self.groupBox)
+        self.formLayout.setWidget(10, QtWidgets.QFormLayout.LabelRole, self.ringPositions_label)
+        self.formLayout.setWidget(10, QtWidgets.QFormLayout.FieldRole, self.ringPositions_lineEdit)
+
         self.ringScaleX_label = QtWidgets.QLabel(self.groupBox)
         self.ringScaleX_doubleSpinBox = self._ring_scale_spin_box()
-        self.formLayout.setWidget(8, QtWidgets.QFormLayout.LabelRole, self.ringScaleX_label)
-        self.formLayout.setWidget(8, QtWidgets.QFormLayout.FieldRole, self.ringScaleX_doubleSpinBox)
+        self.formLayout.setWidget(11, QtWidgets.QFormLayout.LabelRole, self.ringScaleX_label)
+        self.formLayout.setWidget(11, QtWidgets.QFormLayout.FieldRole, self.ringScaleX_doubleSpinBox)
 
         self.ringScaleY_label = QtWidgets.QLabel(self.groupBox)
         self.ringScaleY_doubleSpinBox = self._ring_scale_spin_box()
-        self.formLayout.setWidget(9, QtWidgets.QFormLayout.LabelRole, self.ringScaleY_label)
-        self.formLayout.setWidget(9, QtWidgets.QFormLayout.FieldRole, self.ringScaleY_doubleSpinBox)
+        self.formLayout.setWidget(12, QtWidgets.QFormLayout.LabelRole, self.ringScaleY_label)
+        self.formLayout.setWidget(12, QtWidgets.QFormLayout.FieldRole, self.ringScaleY_doubleSpinBox)
 
         self.ringScaleZ_label = QtWidgets.QLabel(self.groupBox)
         self.ringScaleZ_doubleSpinBox = self._ring_scale_spin_box()
-        self.formLayout.setWidget(10, QtWidgets.QFormLayout.LabelRole, self.ringScaleZ_label)
-        self.formLayout.setWidget(10, QtWidgets.QFormLayout.FieldRole, self.ringScaleZ_doubleSpinBox)
+        self.formLayout.setWidget(13, QtWidgets.QFormLayout.LabelRole, self.ringScaleZ_label)
+        self.formLayout.setWidget(13, QtWidgets.QFormLayout.FieldRole, self.ringScaleZ_doubleSpinBox)
 
         self.mainLayout.addLayout(self.formLayout)
         self.gridLayout.addWidget(self.groupBox, 0, 0, 1, 1)
@@ -136,6 +159,9 @@ class Ui_Form(object):
         self.collision_label.setText(gqt.fakeTranslate("Form", "Collision", None, -1))
         self.tightness_label.setText(gqt.fakeTranslate("Form", "Tightness", None, -1))
         self.falloff_label.setText(gqt.fakeTranslate("Form", "Falloff", None, -1))
+        self.smoothness_label.setText(gqt.fakeTranslate("Form", "Smoothness", None, -1))
+        self.follow_label.setText(gqt.fakeTranslate("Form", "Follow", None, -1))
+        self.ringPositions_label.setText(gqt.fakeTranslate("Form", "Ring Positions", None, -1))
         self.ringScaleX_label.setText(gqt.fakeTranslate("Form", "Ring Scale X", None, -1))
         self.ringScaleY_label.setText(gqt.fakeTranslate("Form", "Ring Scale Y", None, -1))
         self.ringScaleZ_label.setText(gqt.fakeTranslate("Form", "Ring Scale Z", None, -1))
