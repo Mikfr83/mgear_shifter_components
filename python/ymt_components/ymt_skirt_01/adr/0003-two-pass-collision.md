@@ -181,3 +181,7 @@ Revisit this ADR when:
 - the corrective pass needs to also affect the FK/manual layer.
 - per-point ellipsoid volumes prove too coarse against the generator's
   level-ring behavior (revisit sharing the full solver).
+
+2026-09-17 note: the host `collision` and `postCollision` strength channels and the guide `collision`
+setting were removed (plugin ADR-0009). Both passes always apply in full; disable them with
+`nodeState` on the collider or `envelope`/`nodeState` on the post-collide deformer.

@@ -11,6 +11,12 @@ SpaceName = str
 AttrValue = Union[str, int, float, bool, Sequence[float]]
 
 
+class Point3Like(Protocol):
+    x: float
+    y: float
+    z: float
+
+
 class VectorLike(Protocol):
     x: float
     y: float

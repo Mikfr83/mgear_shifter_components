@@ -308,3 +308,6 @@ Revisit this ADR when:
 - non-uniform rig scale becomes a requirement.
 - the plugin adds denser V sampling or ramp evaluation, making a closer-to-
   exact profile fit representable.
+
+2026-09-17 note: the `collision` animator attribute and guide setting were removed (plugin ADR-0009);
+see adr/0003 for the disable switches.
