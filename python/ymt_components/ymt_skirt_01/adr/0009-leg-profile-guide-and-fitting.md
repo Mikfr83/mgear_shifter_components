@@ -4,7 +4,7 @@ Status: accepted (drafted 2026-09-14; contract review by sonnet and Grok, implem
 Depends on the plugin contract colliders `docs/adr/0005-leg-profile-stations.md`
 (node attributes `thighRadiusX/Z`, `kneeRadiusX/Z`, `calfRadiusX/Z`,
 `ankleRadiusX/Z`, `thighPosition`, `calfPosition`; all multipliers of
-`ringScale`, defaults 1.0 and 0.5). Component VERSION becomes [4, 1, 0]
+`ringScale`, defaults 1.0 and 0.5). 
 (additive; existing guides build unchanged because every new parameter
 defaults to the value that reproduces the current output).
 

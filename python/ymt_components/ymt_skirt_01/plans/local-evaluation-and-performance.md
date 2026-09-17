@@ -52,11 +52,13 @@ Maya が生成した geometry 入力の worldSpace 接続を維持し、Orig sha
 
 ## cell と surface の追従
 
-yddColliders 4.1.0 への配線変更で、rebuildSurface を yddSkirtSurfaceFit に、セルごとの pointOnSurfaceInfo、fourByFourMatrix、multMatrix、decomposeMatrix を 1 個の uvPin に置き換えた。
+yddColliders 4.1.0 の yddSkirtSurfaceFit で surface を再構成し、1 個の uvPin で全 cell の位置計算用 frame を取得する。
 yddSkirtSurfaceFit は rebuildSpansV（1〜256）で V を再分割し、リングアンカーは skin 前の outputSurface を読む。
 uvPin は最終 surface の .local を deformedGeometry で受け、originalGeometry は接続せず、relativeSpaceMode=1、normalizedIsoParms=False、normalAxis=1、tangentAxis=0 とする。
-各セルの coordinate は col × rows + row の順に設定し、outputMatrix を npo.offsetParentMatrix へ接続する。
-構築時の POSI は rest frame の取得後に削除し、cell の root scale 補正ノードも撤去した。
+各 cell の coordinate は col × rows + row の順に設定する。uvPin.outputMatrix は cell ごとの multMatrix で定数 offset と合成し、decomposeMatrix で位置を取り出す。
+plusMinusAverage は周期的な隣接列の位置差(s = +1 なら p(c+) − p(c−)、s = −1 なら入力順を入れ替えた符号付きの差)を作り、aimMatrix は隣接行への弦とその位置差から姿勢を求め、npo.offsetParentMatrix へ出力する。
+rest frame は guide の弦から求め、cell ごとの build 用 POSI は作成しない。U 校正と ring anchor の sampler は維持する。cell の root scale 補正ノードは使用しない。
+cell の位置と姿勢の契約は [ADR-0011](../adr/0011-chain-aim-cell-frames.md) に従う。
 Maya での構築検証と性能計測は未実施である。
 
 ウェイト設定は既存の接続を維持する。
@@ -79,20 +81,25 @@ ring の移動、回転、profile 半径、rebuild span、非零 rest offset を
 
 ## cell frame と root scale
 
-uvPin の初期剛体 frame を F0、現在の frame を Fcurrent、guide 位置に置いた rest frame を M0 とする。
-各 npo の local matrix に rest offset を設定し、root の変換は親階層で適用する。
+uvPin の初期剛体 frame を F0、現在の frame を F、guide の弦から作る rest frame を M0 とする。
+cell ごとの multMatrix が位置用行列 P を求め、aimMatrix が隣接 cell の位置から姿勢を求める。root の変換は親階層で適用する。
 
 ~~~text
 offset = M0 × inverse(F0)
-npo.matrix = offset
-npo.offsetParentMatrix = Fcurrent
-npo.worldMatrix = offset × Fcurrent × E→world
+P = offset × F
+p = translation(P)
+npo.offsetParentMatrix = aimMatrix.outputMatrix
+npo.matrix = identity
+npo.worldMatrix = aimMatrix.outputMatrix × E→world
 ~~~
 
 uvPin の行 0〜2 は正規直交するため、法線と接線の長さの比を補正する K は使用しない。
 構築時には F0 の有限性、正規直交性、正の行列式を検証する。
-npo.matrix と offset の成分差は 1e-9 以内、rest の world matrix と M0 × E→world の成分差は 1e-6 × max(1, guide_size) 以内とする。
-control 作成後には control の offsetParentMatrix を identity に設定し、local matrix が identity（1e-6）であることと npo の uvPin 接続を検証する。
+multMatrix.matrixIn[0] と offset の成分差は 1e-9 以内とする。
+rest の aimMatrix.outputMatrix と M0、および npo.worldMatrix と M0 × E→world の成分差は、それぞれ 1e-6 × max(1, guide_size) 以内とする。
+control 作成後には control の offsetParentMatrix を identity に設定し、matrix と offsetParentMatrix が identity（1e-6）であることを検証する。npo には aimMatrix.outputMatrix の接続を検証する。
+これらの rest 検証は全 cell の aim 接続後、ring skin、wave、post-collision の接続前に行う。
+cell frame と検証の契約は [ADR-0011](../adr/0011-chain-aim-cell-frames.md) に従う。
 
 ## Wave の方向契約
 

@@ -6,9 +6,11 @@ collision, 0004 wave oscillator, 0005 ring generalization and rig
 ergonomics, [0006 directional wave expression](adr/0006-directional-wave-expression.md),
 [0007 ydd plugin identity](adr/0007-ydd-plugin-identity.md),
 [0008 grid naming and hierarchy](adr/0008-grid-column-major-naming-and-hierarchy.md),
-and [0009 leg profile and fitting](adr/0009-leg-profile-guide-and-fitting.md)).
+[0009 leg profile and fitting](adr/0009-leg-profile-guide-and-fitting.md),
+[0010 component-local evaluation](adr/0010-component-local-evaluation.md),
+and [0011 chain-aim cell frames](adr/0011-chain-aim-cell-frames.md)).
 
-Version 4.1.0 requires yddColliders 4.1.0 with yddSkirtSurfaceFit,
+Version 0.1.0 requires yddColliders 4.1.0 with yddSkirtSurfaceFit,
 yddSkirtBellCollider, yddSkirtCollideDeformer, and yddSkirtWaveDeformer.
 The component loads `yddColliders` even when the upstream `colliders` plugin is loaded.
 The guide parameters and host channels retain their existing contracts.
@@ -30,11 +32,11 @@ With addJoints enabled, joints are registered column by column with names
 `<col>_<row>`: row 0 is under the parent-relative joint and each later row
 is under the previous row's joint.
 
-Guides from versions before 4.0.0 fail closed and must be rebuilt using
-the settings UI rebuild grid button before building the rig. Guides from
-4.0.0 lack the leg profile parameters; opening the component settings
-dialog adds them with their defaults (the Guide Manager update does the
-same), after which the rig builds as before.
+Guides predating the column-major grid contract in ADR-0008 fail closed
+and must be rebuilt using the settings UI rebuild grid button before
+building the rig. For guides without leg profile parameters, opening the
+component settings dialog adds them with their defaults (the Guide Manager
+update does the same).
 
 ## Guide reference placement
 
@@ -76,13 +78,40 @@ integer, or falls outside 1..256. The fit approximates the collider surface;
 it does not reproduce the previous rebuildSurface output exactly.
 
 Ring anchors sample the fit output before skinning. One uvPin samples
-the final surface in component-local coordinates for all cells, with
-normalizedIsoParms disabled, normalAxis=1, tangentAxis=0, and
-relativeSpaceMode=1. Each npo stores its rest offset locally and receives
-the corresponding uvPin output through offsetParentMatrix. Controls start
-with identity local and offsetParentMatrix transforms. Construction checks
-the pin frames, rest placement, and control transforms before continuing.
-See [ADR-0010](adr/0010-component-local-evaluation.md) and the
+the final surface in component-local evaluation space E for all cells,
+with normalizedIsoParms disabled, normalAxis=1, tangentAxis=0, and
+relativeSpaceMode=1. UV calibration and column-major indices are unchanged.
+
+Each cell has a multMatrix that computes P = offset × F, where F is its
+uvPin frame and offset = M0 × inverse(F0) is constant. A decomposeMatrix
+extracts the position p. This preserves the locator rest position and the
+contribution of uvPin rotation to position when the rest offset is nonzero.
+
+A plusMinusAverage subtracts the positions of the periodic neighbouring
+columns in the order selected by the component winding sign. An aimMatrix
+points local Z at the next row position; the hem uses the previous span
+in the same waist-to-hem direction. Local X follows the signed column
+chord projected perpendicular to Z, and Y = cross(Z, X). The rest frame M0
+uses these same chords from guide positions only. One winding sign is
+chosen from cell (0, 0), the first cell in col-major scan order, and must
+agree across all rest cells so rest Y points outward. Cell rest frames no longer use pointOnSurfaceInfo samplers.
+
+The aimMatrix output drives npo.offsetParentMatrix with an identity local
+matrix. The FK cube remains a child of that npo and starts with identity
+local and offsetParentMatrix transforms. Joint registration is unchanged.
+
+Construction validates rest chord lengths and projected tangent directions,
+then winding, before creating position nodes. It validates sampled positions
+before creating any aim nodes. It also checks uvPin frame finiteness and
+orthonormality, offset values, aim enum labels and defaults, aim connections,
+rest aim and world matrices, and control identity. These checks precede
+ring skin, wave, and post-collision connections. A single warning lists
+cells whose locator-to-uvPin rest distance exceeds 0.1 × guide_size in E;
+those distances determine how strongly uvPin rotation affects position.
+Runtime degeneracy has no fallback or previous-frame retention.
+
+See [ADR-0011](adr/0011-chain-aim-cell-frames.md),
+[ADR-0010](adr/0010-component-local-evaluation.md), and the
 [local evaluation plan](plans/local-evaluation-and-performance.md).
 
 ## Leg profile

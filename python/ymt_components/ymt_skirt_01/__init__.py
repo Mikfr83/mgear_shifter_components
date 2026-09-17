@@ -1623,6 +1623,14 @@ class Component(component.Main):
             )
 
     def _create_surface_drivers_and_controls(self) -> None:
+        self._validate_cell_frame_geometry(self.grid_positions, "rest")
+        self.cell_winding_sign = self._cell_winding_sign()
+        self.cell_position_matrices: dict[tuple[int, int], str] = {}
+        self.cell_position_nodes: dict[tuple[int, int], str] = {}
+        self.cell_aim_nodes: dict[tuple[int, int], str] = {}
+        self.cell_parents: dict[tuple[int, int], PymelNode] = {}
+        self.cell_rest_matrices: dict[tuple[int, int], Matrix16] = {}
+        self.cell_rest_distances: dict[tuple[int, int], float] = {}
         self.cell_pin_node = cmds.createNode("uvPin", name=self.getName("skirtCells_uvPin"))
         cmds.connectAttr(self.collider_surface_shape + ".local", self.cell_pin_node + ".deformedGeometry", force=True)
         cmds.setAttr(self.cell_pin_node + ".relativeSpaceMode", 1)
@@ -1651,34 +1659,50 @@ class Component(component.Main):
                 coordinate = "%s.coordinate[%s]" % (self.cell_pin_node, col * self.rows + row)
                 cmds.setAttr(coordinate + ".coordinateU", self.surface_u_values[col])
                 cmds.setAttr(coordinate + ".coordinateV", self.surface_v_values[row])
-                npo = self._create_cell_driver(cell, self.grid_positions[cell], col_group)
-                npo_matrix = datatypes.Matrix(
-                    cmds.xform(self._node_name(npo), query=True, worldSpace=True, matrix=True)
-                )
-                ctl_length = self._cell_ctl_length(cell)
-                ctl = self.addCtl(
-                    npo,
-                    _cell_stem(cell) + "_ctl",
-                    npo_matrix,
-                    self.color_fk,
-                    "cube",
-                    w=self.ctl_size,
-                    h=self.ctl_size * 0.1,
-                    d=ctl_length,
-                    po=datatypes.Vector(0.0, 0.0, ctl_length * 0.5),
-                    tp=self.parentCtlTag,
-                    wip=self.WIP,
-                )
-                ctl_name = self._node_name(ctl)
-                cmds.setAttr(ctl_name + ".offsetParentMatrix", *self._identity_matrix(), type="matrix")
-                self._require_cell_matrix(ctl_name + ".matrix", self._identity_matrix(), 1.0e-6)
-                pin_output = "%s.outputMatrix[%s]" % (self.cell_pin_node, col * self.rows + row)
-                if not cmds.isConnected(pin_output, self._node_name(npo) + ".offsetParentMatrix"):
-                    raise RuntimeError("ymt_skirt_01 cell %s lost its uvPin connection." % _cell_stem(cell))
-                attribute.setKeyableAttributes(ctl, ["tx", "ty", "tz", "rx", "ry", "rz"])
-                self.npos[cell] = npo
-                self.fk_ctls.append(ctl)
-                self.fk_ctls_by_cell[cell] = ctl
+                self._create_cell_driver(cell, col_group)
+        distant_cells = [
+            "%s=%g" % (_cell_stem(cell), distance)
+            for cell, distance in self.cell_rest_distances.items()
+            if distance > 0.1 * self.guide_size
+        ]
+        if distant_cells:
+            cmds.warning(
+                "ymt_skirt_01: locator-to-uvPin distances exceed 0.1 * guide_size; "
+                "uvPin rotation contributes to cell positions in proportion to these distances: "
+                + ", ".join(distant_cells)
+            )
+        positions = {
+            cell: self._plug_vector(node + ".outputTranslate") for cell, node in self.cell_position_nodes.items()
+        }
+        self._validate_sampled_cell_positions(positions)
+        for cell in positions:
+            self._create_cell_aim(cell)
+        evaluation_to_world = om2.MMatrix(self._matrix_attr(self.evaluation_to_world_plug))
+        for cell in positions:
+            npo = self._create_cell_npo(cell, evaluation_to_world)
+            npo_matrix = datatypes.Matrix(cmds.xform(self._node_name(npo), query=True, worldSpace=True, matrix=True))
+            ctl_length = self._cell_ctl_length(cell)
+            ctl = self.addCtl(
+                npo,
+                _cell_stem(cell) + "_ctl",
+                npo_matrix,
+                self.color_fk,
+                "cube",
+                w=self.ctl_size,
+                h=self.ctl_size * 0.1,
+                d=ctl_length,
+                po=datatypes.Vector(0.0, 0.0, ctl_length * 0.5),
+                tp=self.parentCtlTag,
+                wip=self.WIP,
+            )
+            ctl_name = self._node_name(ctl)
+            cmds.setAttr(ctl_name + ".offsetParentMatrix", *self._identity_matrix(), type="matrix")
+            self._require_cell_matrix(ctl_name + ".matrix", self._identity_matrix(), 1.0e-6)
+            self._require_cell_matrix(ctl_name + ".offsetParentMatrix", self._identity_matrix(), 1.0e-6)
+            attribute.setKeyableAttributes(ctl, ["tx", "ty", "tz", "rx", "ry", "rz"])
+            self.npos[cell] = npo
+            self.fk_ctls.append(ctl)
+            self.fk_ctls_by_cell[cell] = ctl
         if self.add_joints:
             for col in range(self.cols):
                 for row in range(self.rows):
@@ -1693,54 +1717,106 @@ class Component(component.Main):
                     self.jointRelatives[stem + "_loc"] = col * self.rows + row
             self.jointRelatives["root"] = 0
 
+    def _validate_sampled_cell_positions(self, positions: dict[tuple[int, int], Vector3]) -> None:
+        try:
+            self._validate_cell_frame_geometry(positions, "sampled")
+        except RuntimeError:
+            cmds.delete([self.cell_pin_node, *self.cell_position_matrices.values(), *self.cell_position_nodes.values()])
+            raise
+
     def _cell_ctl_length(self, cell: tuple[int, int]) -> float:
-        # npo local Z is tangentV, pointing toward the next row; the hem row reuses the previous span.
+        # Local Z follows the next-row chord; the hem row reuses the previous span.
         row, col = cell
         if row + 1 < self.rows:
             return _distance(self.grid_positions[(row, col)], self.grid_positions[(row + 1, col)])
         return _distance(self.grid_positions[(row - 1, col)], self.grid_positions[(row, col)])
 
-    def _rest_cell_matrix(self, driver_values: Matrix16, locator_position: Vector3) -> Matrix16:
-        # Radial rest frame: Y = outward surface normal, Z = tangentV toward the hem,
-        # X = Y cross Z (circumference tangent). Signs are corrected against the cone
-        # geometry because the node's surface winding is not part of the contract.
-        y_axis = _normalize((driver_values[0], driver_values[1], driver_values[2]), "surface normal", 1.0e-8)
-        driver_position: Vector3 = (driver_values[12], driver_values[13], driver_values[14])
-        offset = _subtract(driver_position, self.reference_positions["waist"])
-        radial = _subtract(offset, _multiply(self.axis, _dot(offset, self.axis)))
-        if _dot(y_axis, radial) < 0.0:
-            y_axis = _multiply(y_axis, -1.0)
-        z_raw: Vector3 = (driver_values[8], driver_values[9], driver_values[10])
-        z_axis = _subtract(z_raw, _multiply(y_axis, _dot(z_raw, y_axis)))
-        z_axis = _normalize(z_axis, "surface tangentV", 1.0e-8)
-        if _dot(z_axis, self.axis) < 0.0:
-            z_axis = _multiply(z_axis, -1.0)
-        x_axis = _cross(y_axis, z_axis)
-        return _matrix_from_axes(x_axis, y_axis, z_axis, locator_position)
+    def _cell_chord(self, positions: dict[tuple[int, int], Vector3], cell: tuple[int, int]) -> Vector3:
+        row, col = cell
+        if row + 1 < self.rows:
+            return _subtract(positions[(row + 1, col)], positions[cell])
+        return _subtract(positions[cell], positions[(row - 1, col)])
 
-    def _create_cell_driver(
+    def _cell_tangent(self, positions: dict[tuple[int, int], Vector3], cell: tuple[int, int]) -> Vector3:
+        row, col = cell
+        return _subtract(positions[(row, (col + 1) % self.cols)], positions[(row, (col - 1) % self.cols)])
+
+    def _validate_cell_frame_geometry(self, positions: dict[tuple[int, int], Vector3], label: str) -> None:
+        eps_len = 1.0e-4 * self.guide_size
+        eps_dir = 1.0e-3
+        for col in range(self.cols):
+            for row in range(self.rows - 1):
+                cell = (row, col)
+                next_cell = (row + 1, col)
+                if _distance(positions[cell], positions[next_cell]) < eps_len:
+                    raise RuntimeError(
+                        "ymt_skirt_01 %s chord between %s and %s is shorter than %g."
+                        % (label, _cell_stem(cell), _cell_stem(next_cell), eps_len)
+                    )
+        for col in range(self.cols):
+            for row in range(self.rows):
+                cell = (row, col)
+                stem = _cell_stem(cell)
+                z_axis = _normalize(self._cell_chord(positions, cell), label + " chord " + stem, eps_len)
+                tangent = _normalize(self._cell_tangent(positions, cell), label + " tangent " + stem, eps_len)
+                projected = _subtract(tangent, _multiply(z_axis, _dot(tangent, z_axis)))
+                if _length(projected) < eps_dir:
+                    raise RuntimeError(
+                        "ymt_skirt_01 %s cell %s has a projected tangent direction shorter than %g."
+                        % (label, stem, eps_dir)
+                    )
+
+    def _cell_winding_sign(self) -> int:
+        eps_len = 1.0e-4 * self.guide_size
+        reference_sign = 0
+        for col in range(self.cols):
+            for row in range(self.rows):
+                cell = (row, col)
+                stem = _cell_stem(cell)
+                offset = _subtract(self.grid_positions[cell], self.reference_positions["waist"])
+                radial = _subtract(offset, _multiply(self.axis, _dot(offset, self.axis)))
+                radial_length = _length(radial)
+                if radial_length < eps_len:
+                    raise RuntimeError("ymt_skirt_01 cell %s has a radial length below %g." % (stem, eps_len))
+                z_axis = _normalize(self._cell_chord(self.grid_positions, cell), stem + " chord", eps_len)
+                x_axis = self._projected_tangent(self.grid_positions, cell, z_axis, 1)
+                q = _dot(_cross(z_axis, x_axis), radial)
+                if abs(q) <= 1.0e-6 * radial_length:
+                    raise RuntimeError("ymt_skirt_01 cell %s has indeterminate winding." % stem)
+                sign = 1 if q > 0.0 else -1
+                if cell == (0, 0):
+                    reference_sign = sign
+                elif sign != reference_sign:
+                    raise RuntimeError(
+                        "ymt_skirt_01 winding mismatch: %s sign %+d, %s sign %+d."
+                        % (_cell_stem((0, 0)), reference_sign, stem, sign)
+                    )
+        return reference_sign
+
+    def _rest_chain_cell_matrix(self, cell: tuple[int, int]) -> Matrix16:
+        eps_len = 1.0e-4 * self.guide_size
+        stem = _cell_stem(cell)
+        z_axis = _normalize(self._cell_chord(self.grid_positions, cell), stem + " chord", eps_len)
+        x_axis = self._projected_tangent(self.grid_positions, cell, z_axis, self.cell_winding_sign)
+        return _matrix_from_axes(x_axis, _cross(z_axis, x_axis), z_axis, self.grid_positions[cell])
+
+    def _projected_tangent(
         self,
+        positions: dict[tuple[int, int], Vector3],
         cell: tuple[int, int],
-        locator_position: Vector3,
-        parent: PymelNode,
-    ) -> PymelNode:
+        z_axis: Vector3,
+        sign: int,
+    ) -> Vector3:
+        stem = _cell_stem(cell)
+        tangent = _normalize(self._cell_tangent(positions, cell), stem + " tangent", 1.0e-4 * self.guide_size)
+        tangent = _multiply(tangent, float(sign))
+        projected = _subtract(tangent, _multiply(z_axis, _dot(tangent, z_axis)))
+        return _normalize(projected, stem + " projected tangent", 1.0e-3)
+
+    def _create_cell_driver(self, cell: tuple[int, int], parent: PymelNode) -> None:
         row, col = cell
         stem = _cell_stem(cell)
-        sampler = cmds.createNode("pointOnSurfaceInfo", name=self.getName(stem + "_restSampler"))
-        try:
-            cmds.connectAttr(self.collider_surface_shape + ".local", sampler + ".inputSurface", force=True)
-            cmds.setAttr(sampler + ".parameterU", self.surface_u_values[col])
-            cmds.setAttr(sampler + ".parameterV", self.surface_v_values[row])
-            driver_values = _matrix_from_axes(
-                self._plug_vector(sampler + ".normal"),
-                self._plug_vector(sampler + ".tangentU"),
-                self._plug_vector(sampler + ".tangentV"),
-                self._plug_vector(sampler + ".position"),
-            )
-            rest_values = self._rest_cell_matrix(driver_values, locator_position)
-        finally:
-            cmds.delete(sampler)
-
+        rest_values = self._rest_chain_cell_matrix(cell)
         pin_output = "%s.outputMatrix[%s]" % (self.cell_pin_node, col * self.rows + row)
         frame_values = self._matrix_attr(pin_output)
         axes = tuple((frame_values[i], frame_values[i + 1], frame_values[i + 2]) for i in (0, 4, 8))
@@ -1751,18 +1827,98 @@ class Component(component.Main):
             or float(frame_matrix.det4x4()) <= 0.0
         ):
             raise RuntimeError("ymt_skirt_01 cell %s requires a right-handed orthonormal uvPin frame." % stem)
-        rest_matrix = om2.MMatrix(rest_values)
-        offset_values = self._openmaya_matrix_values(rest_matrix * frame_matrix.inverse())
+        offset_values = self._openmaya_matrix_values(om2.MMatrix(rest_values) * frame_matrix.inverse())
+        matrix_node = cmds.createNode("multMatrix", name=self.getName(stem + "_pos_mm"))
+        cmds.setAttr(matrix_node + ".matrixIn[0]", *offset_values, type="matrix")
+        cmds.connectAttr(pin_output, matrix_node + ".matrixIn[1]", force=True)
+        self._require_cell_matrix(matrix_node + ".matrixIn[0]", offset_values, 1.0e-9)
+        position_node = cmds.createNode("decomposeMatrix", name=self.getName(stem + "_pos_dm"))
+        cmds.connectAttr(matrix_node + ".matrixSum", position_node + ".inputMatrix", force=True)
+        self.cell_position_matrices[cell] = matrix_node
+        self.cell_position_nodes[cell] = position_node
+        self.cell_parents[cell] = parent
+        self.cell_rest_matrices[cell] = rest_values
+        self.cell_rest_distances[cell] = _distance(self.grid_positions[cell], self._matrix_position(frame_values))
 
-        npo_name = cmds.createNode("transform", name=self.getName(stem + "_npo"), parent=self._node_name(parent))
-        cmds.xform(npo_name, objectSpace=True, matrix=offset_values)
-        self._require_cell_matrix(npo_name + ".matrix", offset_values, 1.0e-9)
-        cmds.connectAttr(pin_output, npo_name + ".offsetParentMatrix", force=True)
-        expected_world = self._openmaya_matrix_values(
-            rest_matrix * om2.MMatrix(self._matrix_attr(self.evaluation_to_world_plug))
+    def _create_cell_aim(self, cell: tuple[int, int]) -> None:
+        row, col = cell
+        stem = _cell_stem(cell)
+        tangent_node = cmds.createNode("plusMinusAverage", name=self.getName(stem + "_tan_pma"))
+        cmds.setAttr(tangent_node + ".operation", 2)
+        neighbours = ((col + 1) % self.cols, (col - 1) % self.cols)
+        if self.cell_winding_sign < 0:
+            neighbours = neighbours[::-1]
+        for index, neighbour_col in enumerate(neighbours):
+            cmds.connectAttr(
+                self.cell_position_nodes[(row, neighbour_col)] + ".outputTranslate",
+                "%s.input3D[%s]" % (tangent_node, index),
+                force=True,
+            )
+        aim_node = cmds.createNode("aimMatrix", name=self.getName(stem + "_aim"))
+        cmds.connectAttr(self.cell_position_matrices[cell] + ".matrixSum", aim_node + ".inputMatrix", force=True)
+        target_row = row + 1 if row + 1 < self.rows else row - 1
+        primary_axis = 1.0 if row + 1 < self.rows else -1.0
+        cmds.setAttr(aim_node + ".primaryInputAxis", 0.0, 0.0, primary_axis, type="double3")
+        cmds.connectAttr(
+            self.cell_position_matrices[(target_row, col)] + ".matrixSum",
+            aim_node + ".primaryTargetMatrix",
+            force=True,
         )
-        self._require_cell_matrix(npo_name + ".worldMatrix[0]", expected_world, 1.0e-6 * max(1.0, self.guide_size))
-        return pm.PyNode(npo_name)
+        cmds.setAttr(aim_node + ".primaryTargetVector", 0.0, 0.0, 0.0, type="double3")
+        cmds.setAttr(aim_node + ".secondaryInputAxis", 1.0, 0.0, 0.0, type="double3")
+        cmds.connectAttr(tangent_node + ".output3D", aim_node + ".secondaryTargetVector", force=True)
+        self._configure_cell_aim_modes(aim_node, stem)
+        self._verify_cell_aim_defaults(aim_node, stem)
+        self.cell_aim_nodes[cell] = aim_node
+
+    def _configure_cell_aim_modes(self, aim_node: str, stem: str) -> None:
+        for attr, label in (("primaryMode", "Aim"), ("secondaryMode", "Align")):
+            definitions = cast("list[str]", cmds.attributeQuery(attr, node=aim_node, listEnum=True))
+            value = self._enum_value(definitions[0] if definitions else "", label)
+            if value is None:
+                raise RuntimeError("ymt_skirt_01 cell %s requires %s label %s." % (stem, attr, label))
+            cmds.setAttr(aim_node + "." + attr, value)
+            if cmds.getAttr(aim_node + "." + attr, asString=True) != label:
+                raise RuntimeError("ymt_skirt_01 cell %s failed to set %s to %s." % (stem, attr, label))
+
+    def _verify_cell_aim_defaults(self, aim_node: str, stem: str) -> None:
+        for attr in ("secondaryTargetMatrix", "preSpaceMatrix", "postSpaceMatrix"):
+            if not cmds.attributeQuery(attr, node=aim_node, exists=True):
+                continue
+            if cmds.listConnections(aim_node + "." + attr, source=True, destination=False):
+                raise RuntimeError("ymt_skirt_01 cell %s must leave aim %s unconnected." % (stem, attr))
+            self._require_cell_matrix(aim_node + "." + attr, self._identity_matrix(), 1.0e-9)
+        for attr, expected in (("enable", 1.0), ("envelope", 1.0)):
+            if float(cmds.getAttr(aim_node + "." + attr)) != expected:
+                raise RuntimeError("ymt_skirt_01 cell %s requires aim %s=%g." % (stem, attr, expected))
+
+    def _enum_value(self, definition: str, label: str) -> int | None:
+        # listEnum yields "name" tokens with implicit consecutive values, or "name=value" tokens.
+        value = -1
+        for token in definition.split(":"):
+            name, separator, explicit = token.partition("=")
+            value = int(explicit) if separator else value + 1
+            if name == label:
+                return value
+        return None
+
+    def _create_cell_npo(self, cell: tuple[int, int], evaluation_to_world: om2.MMatrix) -> PymelNode:
+        stem = _cell_stem(cell)
+        npo_name = cmds.createNode(
+            "transform", name=self.getName(stem + "_npo"), parent=self._node_name(self.cell_parents[cell])
+        )
+        cmds.xform(npo_name, objectSpace=True, matrix=self._identity_matrix())
+        self._require_cell_matrix(npo_name + ".matrix", self._identity_matrix(), 1.0e-6)
+        aim_output = self.cell_aim_nodes[cell] + ".outputMatrix"
+        cmds.connectAttr(aim_output, npo_name + ".offsetParentMatrix", force=True)
+        if not cmds.isConnected(aim_output, npo_name + ".offsetParentMatrix"):
+            raise RuntimeError("ymt_skirt_01 cell %s lost its aimMatrix connection." % stem)
+        rest_values = self.cell_rest_matrices[cell]
+        tolerance = 1.0e-6 * max(1.0, self.guide_size)
+        self._require_cell_matrix(aim_output, rest_values, tolerance)
+        expected_world = self._openmaya_matrix_values(om2.MMatrix(rest_values) * evaluation_to_world)
+        self._require_cell_matrix(npo_name + ".worldMatrix[0]", expected_world, tolerance)
+        return cast("PymelNode", pm.PyNode(npo_name))
 
     def _require_cell_matrix(self, plug: str, expected: Matrix16, tolerance: float) -> None:
         actual = self._matrix_attr(plug)

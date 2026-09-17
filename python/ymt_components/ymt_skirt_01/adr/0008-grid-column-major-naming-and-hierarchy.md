@@ -3,8 +3,6 @@
 Status: accepted (2026-09-14). Supersedes the grid naming and the flat
 grid layout of ADR-0001, and the per-row control groups and flat joint
 list of ADR-0005.
-Component and guide VERSION become [4, 0, 0]. Guides built for earlier
-versions are not supported; the build fails closed (rule G6).
 
 ## Context
 
