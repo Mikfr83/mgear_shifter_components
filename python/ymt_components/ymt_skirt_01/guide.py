@@ -28,7 +28,8 @@ from mgear.core import curve, pyqt, transform
 from mgear.shifter.component import guide
 from mgear.vendor.Qt import QtCore, QtWidgets
 
-from . import LEG_PROFILE_POSITION_NAMES, LEG_PROFILE_RADIUS_NAMES, _validated_leg_profile_value
+from . import LEG_PROFILE_POSITION_NAMES, LEG_PROFILE_RADIUS_NAMES, _parse_seams, _validated_leg_profile_value
+from . import grid
 from . import settingsUI as sui
 
 
@@ -53,6 +54,22 @@ def _grid_sort_key(local_name: str) -> tuple[int, int, str]:
     if match is None:
         return (0, 0, local_name)
     return (int(match.group(1)), int(match.group(2)), local_name)
+
+
+def _row_curve_fragments(row: int, cols: int, seams: list[tuple[int, int]]) -> list[tuple[str, list[int]]]:
+    gaps = {gap for gap, start_row in seams if row >= start_row}
+    if not gaps:
+        return [("skirtRow%sCrv" % row, [*range(cols), 0])]
+    start = (min(gaps) + 1) % cols
+    fragments = []
+    columns = []
+    for offset in range(cols):
+        col = (start + offset) % cols
+        columns.append(col)
+        if col in gaps:
+            fragments.append(("skirtRow%s_%sCrv" % (row, len(fragments)), columns))
+            columns = []
+    return fragments
 
 
 def _leg_section_frame(
@@ -281,12 +298,15 @@ class Guide(guide.ComponentGuide):
         self.pAddJoints = self.addParam("addJoints", "bool", True)
         self.pPostCollision = self.addParam("postCollision", "bool", True)
         self.pWave = self.addParam("wave", "bool", False)
+        self.pColumnFk = self.addParam("columnFk", "bool", True)
         self.pRebuildSpansV = self.addParam("rebuildSpansV", "long", 4, 1, 256)
         self.pTightness = self.addParam("tightness", "double", 0.6, 0.0, 1.0)
         self.pFalloff = self.addParam("falloff", "double", -1.0, -1.0, 1.0)
         self.pSmoothness = self.addParam("smoothness", "double", 0.1, 0.0, 1.0)
         self.pFollow = self.addParam("follow", "double", 0.2, 0.0, 1.0)
         self.pRingPositions = self.addParam("ringPositions", "string", "auto")
+        self.pSeams = self.addParam("seams", "string", "")
+        self.pFollowRange = self.addParam("followRange", "double", 0.1875, 0.0, None)
         self.pRingScaleX = self.addParam("ringScaleX", "double", 1.0, 0.001, None)
         self.pRingScaleY = self.addParam("ringScaleY", "double", 1.0, 0.001, None)
         self.pRingScaleZ = self.addParam("ringScaleZ", "double", 1.0, 0.001, None)
@@ -299,6 +319,8 @@ class Guide(guide.ComponentGuide):
         self.pParentJointIndex = self.addParam("parentJointIndex", "long", -1, None, None)
 
     def setFromHierarchy(self, root: PymelNode) -> None:
+        if not pm.attributeQuery("columnFk", node=root, exists=True):
+            Guide().paramDefs["columnFk"].create(root)
         super(Guide, self).setFromHierarchy(root)
         self._collect_grid_guides()
 
@@ -327,6 +349,8 @@ class Guide(guide.ComponentGuide):
         return sorted(names, key=_grid_sort_key)
 
     def _add_row_display_curves(self) -> list[PymelNode]:
+        row_count, cols = int(self.values["rows"]), int(self.values["cols"])
+        seams, _tokens = _parse_seams(self.values["seams"], row_count, cols)
         rows: dict[int, list[tuple[int, PymelNode]]] = {}
         for locator in self.grid_locs:
             local_name = locator.name().split("|")[-1][len(self.fullName) + 1 :]
@@ -336,9 +360,10 @@ class Guide(guide.ComponentGuide):
             rows.setdefault(int(match.group(2)), []).append((int(match.group(1)), locator))
         curves = []
         for row, indexed_locators in sorted(rows.items()):
-            locators = [locator for _col, locator in sorted(indexed_locators)]
-            if len(locators) >= 3:
-                curves.append(self.addDispCurve("skirtRow%sCrv" % row, [*locators, locators[0]]))
+            locators = dict(indexed_locators)
+            if len(locators) == cols:
+                for name, columns in _row_curve_fragments(row, cols, seams):
+                    curves.append(self.addDispCurve(name, [locators[col] for col in columns], degree=1))
         return curves
 
     def _collect_grid_guides(self) -> None:
@@ -392,6 +417,7 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
         self.setup_componentSettingWindow()
         self.create_componentControls()
         self._ensure_leg_profile_parameters()
+        self._ensure_column_fk_parameter()
         self.populate_componentControls()
         self.create_componentLayout()
         self.create_componentConnections()
@@ -414,12 +440,15 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
         self.populateCheck(self.settingsTab.addJoints_checkBox, "addJoints")
         self.populateCheck(self.settingsTab.postCollision_checkBox, "postCollision")
         self.populateCheck(self.settingsTab.wave_checkBox, "wave")
+        self.populateCheck(self.settingsTab.columnFk_checkBox, "columnFk")
         self.settingsTab.rebuildSpansV_spinBox.setValue(self.root.attr("rebuildSpansV").get())
         self.settingsTab.tightness_doubleSpinBox.setValue(self.root.attr("tightness").get())
         self.settingsTab.falloff_doubleSpinBox.setValue(self.root.attr("falloff").get())
         self.settingsTab.smoothness_doubleSpinBox.setValue(self.root.attr("smoothness").get())
         self.settingsTab.follow_doubleSpinBox.setValue(self.root.attr("follow").get())
         self.settingsTab.ringPositions_lineEdit.setText(self.root.attr("ringPositions").get())
+        self.settingsTab.seams_lineEdit.setText(self.root.attr("seams").get())
+        self.settingsTab.followRange_doubleSpinBox.setValue(self.root.attr("followRange").get())
         self.settingsTab.ringScaleX_doubleSpinBox.setValue(self.root.attr("ringScaleX").get())
         self.settingsTab.ringScaleY_doubleSpinBox.setValue(self.root.attr("ringScaleY").get())
         self.settingsTab.ringScaleZ_doubleSpinBox.setValue(self.root.attr("ringScaleZ").get())
@@ -464,6 +493,9 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
         self.settingsTab.wave_checkBox.stateChanged.connect(
             partial(self.updateCheck, self.settingsTab.wave_checkBox, "wave")
         )
+        self.settingsTab.columnFk_checkBox.stateChanged.connect(
+            partial(self.updateCheck, self.settingsTab.columnFk_checkBox, "columnFk")
+        )
         self.settingsTab.rebuildSpansV_spinBox.valueChanged.connect(
             partial(self.updateSpinBox, self.settingsTab.rebuildSpansV_spinBox, "rebuildSpansV")
         )
@@ -480,6 +512,10 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
             partial(self.updateSpinBox, self.settingsTab.follow_doubleSpinBox, "follow")
         )
         self.settingsTab.ringPositions_lineEdit.editingFinished.connect(self._update_ring_positions)
+        self.settingsTab.seams_lineEdit.editingFinished.connect(self._update_seams)
+        self.settingsTab.followRange_doubleSpinBox.valueChanged.connect(
+            partial(self.updateSpinBox, self.settingsTab.followRange_doubleSpinBox, "followRange")
+        )
         self.settingsTab.ringScaleX_doubleSpinBox.valueChanged.connect(
             partial(self._update_ring_scale, self.settingsTab.ringScaleX_doubleSpinBox, "ringScaleX")
         )
@@ -521,12 +557,22 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
             pm.displayInfo("ymt_skirt_01 added missing guide parameters with defaults: %s" % ", ".join(added))
         return added
 
+    def _ensure_column_fk_parameter(self) -> bool:
+        if pm.attributeQuery("columnFk", node=self.root, exists=True):
+            return False
+        Guide().paramDefs["columnFk"].create(self.root)
+        pm.displayInfo("ymt_skirt_01 added missing guide parameter with default: columnFk")
+        return True
+
     def _update_ring_scale(self, spin_box: QtWidgets.QDoubleSpinBox, attr_name: str, *_args: float) -> None:
         self.updateSpinBox(spin_box, attr_name)
         self.update_ring_preview()
 
     def _update_ring_positions(self) -> None:
         self.root.attr("ringPositions").set(self.settingsTab.ringPositions_lineEdit.text())
+
+    def _update_seams(self) -> None:
+        self.root.attr("seams").set(self.settingsTab.seams_lineEdit.text())
 
     def _update_profile_mesh(self) -> None:
         self.root.attr("profileMesh").set(self.settingsTab.profileMesh_lineEdit.text())
@@ -707,49 +753,38 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
     def rebuild_grid_locators(self) -> None:
         rows = self.settingsTab.rows_spinBox.value()
         cols = self.settingsTab.cols_spinBox.value()
+        self.values = {name: self.root.attr(name).get() for name in ("rows", "cols", "seams")}
+        _parse_seams(self.values["seams"], rows, cols)
         try:
-            waist = self._guide_position("waist")
-            heel_left = self._guide_position("heel_L")
-            heel_right = self._guide_position("heel_R")
-            hip_left = self._guide_position("hip_L")
-            hip_right = self._guide_position("hip_R")
-            axis_vector = ((heel_left + heel_right) * 0.5) - waist
-            axis_length = axis_vector.length()
-            epsilon = 1.0e-3 * axis_length
-            axis = self._normalized(axis_vector, "waist-to-heel axis", epsilon)
-            front = self._root_front()
-            front_length = front.length()
-            if not math.isfinite(float(front_length)) or front_length <= 0.0:
-                raise RuntimeError("ymt_skirt_01 has degenerate guide root front.")
-            front = front / front_length
-            projected_front = front - (axis * (front * axis))
-            projected_front = self._normalized(
-                projected_front * axis_length,
-                "projected root front",
-                epsilon,
+            reference_names = ("waist", "hip_L", "knee_L", "heel_L", "hip_R", "knee_R", "heel_R")
+            references = {name: tuple(float(value) for value in self._guide_position(name)) for name in reference_names}
+            front = tuple(float(value) for value in self._root_front())
+            profile = {
+                name: _validated_leg_profile_value(name, self.root.attr(name).get())
+                for name in (*LEG_PROFILE_RADIUS_NAMES, *LEG_PROFILE_POSITION_NAMES)
+            }
+            positions = grid.grid_locator_positions(
+                rows,
+                cols,
+                references,
+                front,
+                profile,
+                float(self.root.attr("ringScaleX").get()),
+                float(self.root.attr("ringScaleZ").get()),
             )
-            hip_radius = (hip_left - hip_right).length() * 0.5
-            if hip_radius <= epsilon:
-                raise RuntimeError("ymt_skirt_01 requires separated hip references to rebuild the grid.")
-        except RuntimeError as exc:
+        except (RuntimeError, ValueError) as exc:
             pm.displayWarning(str(exc))
             return
 
-        side = axis ^ projected_front
         try:
             self._delete_existing_grid()
             created_by_row: dict[int, list[PymelNode]] = {}
             for col in range(cols):
                 parent = self.root
-                angle = (2.0 * math.pi * col) / float(cols)
-                radial = (projected_front * math.cos(angle)) + (side * math.sin(angle))
                 for row in range(rows):
-                    row_ratio = row / float(rows - 1)
-                    axial_fraction = 0.15 + (0.75 * row_ratio)
-                    radius = hip_radius * (1.0 + (0.6 * row_ratio))
-                    center = waist + (axis * axis_length * axial_fraction)
+                    position = positions[col * rows + row][2]
                     locator = self._create_grid_locator(
-                        _grid_locator_name(col, row), parent, center + (radial * radius)
+                        _grid_locator_name(col, row), parent, datatypes.Vector(position)
                     )
                     created_by_row.setdefault(row, []).append(locator)
                     parent = locator
@@ -813,10 +848,14 @@ class componentSettings(MayaQWidgetDockableMixin, guide.componentMainSettings):
 
     def _create_row_display_curves(self, locators_by_row: dict[int, list[PymelNode]]) -> None:
         prefix = self.root.name().replace("_root", "")
+        self.values = {name: self.root.attr(name).get() for name in ("rows", "cols", "seams")}
+        rows, cols = int(self.values["rows"]), int(self.values["cols"])
+        seams, _tokens = _parse_seams(self.values["seams"], rows, cols)
         for row, locators in sorted(locators_by_row.items()):
-            curve.addCnsCurve(
-                self.root,
-                "%s_skirtRow%sCrv" % (prefix, row),
-                [*locators, locators[0]],
-                degree=1,
-            )
+            for name, columns in _row_curve_fragments(row, cols, seams):
+                curve.addCnsCurve(
+                    self.root,
+                    "%s_%s" % (prefix, name),
+                    [locators[col] for col in columns],
+                    degree=1,
+                )
